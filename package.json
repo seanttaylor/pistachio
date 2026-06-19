@@ -1,0 +1,10 @@
+{
+  "name": "pistachio",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "json-2-csv": "^5.5.11",
+    "timers": "0.1.1"
+  },
+  "type": "module"
+}
