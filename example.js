@@ -237,8 +237,18 @@ import { ViewFeedJSON, ViewFeedCSV } from './interfaces.js';
 
     const res3 = await router.resolve(req3);
 
+    const req4 = new Request(`http://localhost:8080/feeds/${id}`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+      },
+    });
+
+    const res4 = await router.resolve(req4);
+
     console.log(await res2.json());
     console.log(await res3.json());
+    console.log(res4.statusText);
   } catch (ex) {
     console.error(
       `INTERNAL_ERROR (Main): Exception encountered. See details -> ${ex.message}`
