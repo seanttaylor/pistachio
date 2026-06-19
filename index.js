@@ -34,6 +34,10 @@ export class Pistachio {
     { collection = false, allowedMethods = [], use = [], views = [] } = {}
   ) {
     const routes = [];
+    const methods =
+      allowedMethods.length > 0
+        ? allowedMethods
+        : ['GET', 'POST', 'PUT', 'DELETE'];
     const viewMap = Object.fromEntries(
       views.map((view) => [view.contentType, view])
     );
@@ -48,9 +52,10 @@ export class Pistachio {
           resource,
           use,
           views: viewMap,
+          allowedMethods: methods,
           collection: true,
           operation: 'create',
-          pattern: new URLPattern({ pathname: `${path}` }),
+          pattern: new URLPattern({ pathname: path }),
           rel: 'create',
         },
 
@@ -59,34 +64,39 @@ export class Pistachio {
           resource,
           use,
           views: viewMap,
+          allowedMethods: methods,
           collection: true,
           operation: 'read',
-          pattern: new URLPattern({ pathname: `${path}` }),
+          pattern: new URLPattern({ pathname: path }),
           rel: 'read',
         },
 
         PUT: {
+          path,
           resource,
           use,
           views: viewMap,
+          allowedMethods: methods,
+          collection: true,
           operation: 'update',
-          path: `${path}/:id`,
-          pattern: new URLPattern({ pathname: `${path}/:id` }),
+          pattern: new URLPattern({ pathname: path }),
           rel: 'update',
         },
 
         DELETE: {
+          path,
           resource,
           use,
           views: viewMap,
+          allowedMethods: methods,
+          collection: true,
           operation: 'delete',
-          path: `${path}/:id`,
-          pattern: new URLPattern({ pathname: `${path}/:id` }),
+          pattern: new URLPattern({ pathname: path }),
           rel: 'delete',
         },
       };
 
-      for (const method of allowedMethods) {
+      for (const method of methods) {
         const definition = collectionOperations[method];
 
         if (!definition) {
@@ -105,6 +115,7 @@ export class Pistachio {
           routes.push({
             resource,
             use,
+            allowedMethods: methods,
             views: viewMap,
             method: 'GET',
             operation: 'read',
@@ -127,6 +138,7 @@ export class Pistachio {
         operation,
         use,
         views: viewMap,
+        allowedMethods: methods,
         method: definition.method,
         path: `${path}/:id${definition.path}`,
         pattern: new URLPattern({ pathname: `${path}/:id${definition.path}` }),
@@ -239,30 +251,64 @@ export class Pistachio {
     if (!view) {
       return new Response('Not Acceptable', {
         status: 406,
+        statusText: 'NOT ACCEPTABLE',
       });
     }
 
     return view.render(record);
   }
 
+  /**
+   * Resolves an incoming request to a route.
+   *
+   * @param {Request} req
+   * @returns {Promise<Response>}
+   */
   async resolve(req) {
     try {
+      const candidates = [];
+
       for (const route of this.#routes) {
-        if (route.method !== req.method) {
-          continue;
-        }
-        const url = new URL(req.url);
         const match = route.pattern.exec(req.url);
 
-        if (!match) {
-          continue;
+        if (match) {
+          candidates.push({
+            route,
+            match,
+          });
         }
-
-        return this.#dispatch(route, req, match);
       }
 
-      return new Response('Not Found', {
-        status: 404,
+      //
+      // No matching resource.
+      //
+      if (candidates.length === 0) {
+        return new Response('Not Found', {
+          status: 404,
+          statusText: 'NOT FOUND',
+        });
+      }
+
+      //
+      // Matching resource and method.
+      //
+      for (const candidate of candidates) {
+        if (candidate.route.method === req.method) {
+          return this.#dispatch(candidate.route, req, candidate.match);
+        }
+      }
+
+      //
+      // Matching resource, unsupported method.
+      //
+      const { allowedMethods } = candidates[0].route;
+
+      return new Response('Method Not Allowed', {
+        status: 405,
+        statusText: 'METHOD NOT ALLOWED',
+        headers: {
+          Allow: allowedMethods.join(', '),
+        },
       });
     } catch (ex) {
       console.error(
@@ -271,3 +317,49 @@ export class Pistachio {
     }
   }
 }
+
+/**
+ * A compiled route definition produced by {@link Pistachio#resource}.
+ *
+ * Route definitions are the internal representation of HTTP resources.
+ * They are generated once during resource registration and consumed by the
+ * request resolver and dispatcher at runtime.
+ *
+ * @typedef {Object} RouteDefinition
+ *
+ * @property {string} method
+ * The HTTP method handled by this route (e.g. `"GET"`, `"POST"`).
+ *
+ * @property {string} path
+ * The route template used when registering the resource.
+ *
+ * @property {URLPattern} pattern
+ * Compiled URL pattern used during request resolution.
+ *
+ * @property {Object} resource
+ * The resource instance responsible for handling the request.
+ *
+ * @property {string} operation
+ * The resource method invoked when this route is dispatched.
+ *
+ * @property {string} rel
+ * The CRUD relationship describing how the result of the domain operation
+ * should be persisted. This corresponds to a persistence method exposed by
+ * the resource (typically `create`, `read`, `update`, `delete`, or `noop`).
+ *
+ * @property {boolean} [collection=false]
+ * Indicates that the route was automatically generated as part of a
+ * collection resource.
+ *
+ * @property {string[]} allowedMethods
+ * The HTTP methods permitted for the resource. Used to determine whether
+ * requests should result in `405 Method Not Allowed` responses and to
+ * generate the `Allow` response header.
+ *
+ * @property {Function[]} use
+ * Middleware executed before the route is invoked.
+ *
+ * @property {Object.<string, IResourceView>} views
+ * Resource representations keyed by MIME type (for example
+ * `"application/json"`). Used during content negotiation.
+ */
