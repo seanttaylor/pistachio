@@ -1,5 +1,6 @@
 import { Pistachio } from './index.js';
 import { logger } from './middleware.js';
+import { ViewFeedJSON, ViewFeedCSV } from './interfaces.js';
 
 (async function main() {
   try {
@@ -206,6 +207,7 @@ import { logger } from './middleware.js';
       collection: true,
       allowedMethods: ['GET', 'POST'],
       use: [logger],
+      views: [new ViewFeedJSON(), new ViewFeedCSV()],
     });
 
     const req1 = new Request('http://localhost:8080/feeds', {
@@ -214,11 +216,13 @@ import { logger } from './middleware.js';
     });
 
     const res1 = await router.resolve(req1);
-
     const { id } = await res1.json();
 
     const req2 = new Request(`http://localhost:8080/feeds/${id}`, {
       method: 'GET',
+      headers: {
+        accept: 'application/json',
+      },
     });
 
     const res2 = await router.resolve(req2);
