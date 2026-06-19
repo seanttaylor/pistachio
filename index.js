@@ -31,9 +31,12 @@ export class Pistachio {
   #compileResource(
     path,
     resource,
-    { collection = false, allowedMethods = [], use = [] } = {}
+    { collection = false, allowedMethods = [], use = [], views = [] } = {}
   ) {
     const routes = [];
+    const viewMap = Object.fromEntries(
+      views.map((view) => [view.contentType, view])
+    );
 
     //
     // Collection routes.
@@ -44,6 +47,7 @@ export class Pistachio {
           path,
           resource,
           use,
+          views: viewMap,
           collection: true,
           operation: 'create',
           pattern: new URLPattern({ pathname: `${path}` }),
@@ -54,6 +58,7 @@ export class Pistachio {
           path,
           resource,
           use,
+          views: viewMap,
           collection: true,
           operation: 'read',
           pattern: new URLPattern({ pathname: `${path}` }),
@@ -63,6 +68,7 @@ export class Pistachio {
         PUT: {
           resource,
           use,
+          views: viewMap,
           operation: 'update',
           path: `${path}/:id`,
           pattern: new URLPattern({ pathname: `${path}/:id` }),
@@ -72,6 +78,7 @@ export class Pistachio {
         DELETE: {
           resource,
           use,
+          views: viewMap,
           operation: 'delete',
           path: `${path}/:id`,
           pattern: new URLPattern({ pathname: `${path}/:id` }),
@@ -98,6 +105,7 @@ export class Pistachio {
           routes.push({
             resource,
             use,
+            views: viewMap,
             method: 'GET',
             operation: 'read',
             path: `${path}/:id`,
@@ -118,6 +126,7 @@ export class Pistachio {
         resource,
         operation,
         use,
+        views: viewMap,
         method: definition.method,
         path: `${path}/:id${definition.path}`,
         pattern: new URLPattern({ pathname: `${path}/:id${definition.path}` }),
@@ -126,6 +135,23 @@ export class Pistachio {
     }
 
     return routes;
+  }
+
+  /**
+   * Selects the most appropriate resource view for the request.
+   *
+   * @param {RouteDefinition} route
+   * @param {Request} req
+   * @returns {?IResourceView}
+   */
+  #selectView(route, req) {
+    const accept = req.headers.get('accept');
+
+    if (!accept || accept === '*/*') {
+      return route.views['application/json'] ?? null;
+    }
+
+    return route.views[accept] ?? route.views['application/json'] ?? null;
   }
 
   async #dispatch(route, req, match) {
@@ -202,14 +228,21 @@ export class Pistachio {
 
   async #invoke(route, ctx) {
     const result = await route.resource[route.operation]({
-      params: ctx.params,
+      //params: ctx.params,
       ...ctx.body,
-      request: ctx.request,
+      //request: ctx.request,
     });
 
     const record = await route.resource[route.rel](result);
+    const view = this.#selectView(route, ctx.request);
 
-    return Response.json(record);
+    if (!view) {
+      return new Response('Not Acceptable', {
+        status: 406,
+      });
+    }
+
+    return view.render(record);
   }
 
   async resolve(req) {
