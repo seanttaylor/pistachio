@@ -1,365 +1,206 @@
-export class Pistachio {
-  /**
-   * @type {RouteDefinition[]}
-   */
-  #routes = [];
+import { Pistachio } from './pistachio.js';
+import { logger } from './middleware.js';
+import { ViewFeedJSON, ViewFeedCSV } from './interfaces/resource.js';
+import { Feed } from './domain/feed.js';
 
-  /**
-   * Registers a resource.
-   *
-   * @param {string} path
-   * @param {Object} resource
-   * @param {Object} options
-   * @returns {RouteDefinition[]}
-   */
-  resource(path, resource, options = {}) {
-    const routes = this.#compileResource(path, resource, options);
+import Fastify from 'fastify';
 
-    this.#routes.push(...routes);
-
-    return routes;
-  }
-
-  /**
-   * Compiles a resource into route definitions.
-   *
-   * @param {string} path
-   * @param {Object} resource
-   * @param {Object} options
-   * @returns {RouteDefinition[]}
-   */
-  #compileResource(
-    path,
-    resource,
-    { collection = false, allowedMethods = [], use = [], views = [] } = {}
-  ) {
-    const routes = [];
-    const methods =
-      allowedMethods.length > 0
-        ? allowedMethods
-        : ['GET', 'POST', 'PUT', 'DELETE'];
-    const viewMap = Object.fromEntries(
-      views.map((view) => [view.contentType, view])
-    );
-
-    //
-    // Collection routes.
-    //
-    if (collection) {
-      const collectionOperations = {
-        POST: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'create',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'create',
-        },
-
-        GET: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'read',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'read',
-        },
-
-        PUT: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'update',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'update',
-        },
-
-        DELETE: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'delete',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'delete',
-        },
-      };
-
-      for (const method of methods) {
-        const definition = collectionOperations[method];
-
-        if (!definition) {
-          continue;
-        }
-
-        routes.push({
-          method,
-          ...definition,
-        });
-
-        //
-        // GET gets both collection and member routes.
-        //
-        if (method === 'GET') {
-          routes.push({
-            resource,
-            use,
-            allowedMethods: methods,
-            views: viewMap,
-            method: 'GET',
-            operation: 'read',
-            path: `${path}/:id`,
-            pattern: new URLPattern({ pathname: `${path}/:id` }),
-            rel: 'read',
-          });
-        }
-      }
-    }
-
-    //
-    // Resource-defined routes.
-    //
-    const definitions = resource.constructor.HTTP ?? {};
-
-    for (const [operation, definition] of Object.entries(definitions)) {
-      routes.push({
-        resource,
-        operation,
-        use,
-        views: viewMap,
-        allowedMethods: methods,
-        method: definition.method,
-        path: `${path}/:id${definition.path}`,
-        pattern: new URLPattern({ pathname: `${path}/:id${definition.path}` }),
-        rel: definition.rel,
-      });
-    }
-
-    return routes;
-  }
-
-  /**
-   * Selects the most appropriate resource view for the request.
-   *
-   * @param {RouteDefinition} route
-   * @param {Request} req
-   * @returns {?IResourceView}
-   */
-  #selectView(route, req) {
-    const accept = req.headers.get('accept');
-
-    if (!accept || accept === '*/*') {
-      return route.views['application/json'] ?? null;
-    }
-
-    return route.views[accept] ?? route.views['application/json'] ?? null;
-  }
-
-  async #dispatch(route, req, match) {
-    const ctx = {
-      request: req,
-      params: match.pathname.groups,
-      body: await this.#parseBody(req),
-      route,
-    };
-
-    return this.#pipeline(route.use, ctx, () => this.#invoke(route, ctx));
-  }
-
-  /**
-   * Executes a middleware pipeline.
-   *
-   * @param {Function[]} middleware
-   * @param {Object} ctx
-   * @param {Function} terminal
-   * @returns {Promise<Response>}
-   */
-  async #pipeline(middleware, ctx, terminal) {
-    let index = -1;
-
-    const run = async (i) => {
-      if (i <= index) {
-        throw new Error('next() called multiple times');
-      }
-
-      index = i;
-
-      if (i === middleware.length) {
-        return terminal();
-      }
-
-      const fn = middleware[i];
-
-      try {
-        return await fn(ctx, () => run(i + 1));
-      } catch (ex) {
-        console.error(
-          `INTERNAL ERROR (Pistachio): ***EXCEPTION ENCOUNTERED*** while executing middleware (${fn.name}). See details -> ${ex.message}`
-        );
-
-        return new Response('{}', {
-          status: 500,
-          statusText: 'INTERNAL ERROR',
-        });
-      }
-    };
-
-    return run(0);
-  }
-
-  /**
-   * Parses a request body when present.
-   *
-   * @param {Request} req
-   * @returns {Promise<?Object>}
-   */
-  async #parseBody(req) {
-    if (req.method === 'GET') {
-      return null;
-    }
-
-    const contentLength = req.headers.get('content-length');
-
-    if (contentLength === '0') {
-      return null;
-    }
-
-    return req.json();
-  }
-
-  async #invoke(route, ctx) {
-    const result = await route.resource[route.operation]({
-      //params: ctx.params,
-      ...ctx.body,
-      //request: ctx.request,
+(async function main() {
+  try {
+    const fastify = Fastify({
+      logger: true
     });
 
-    const record = await route.resource[route.rel](result);
-    const view = this.#selectView(route, ctx.request);
+    /**
+     * Defines the persistence contract required by Feed.
+     */
+    class IFeedWriter {
+      /**
+       * Creates a resource.
+       *
+       * @param {Object} data
+       * @returns {Promise<Object>}
+       */
+      async create(data) {
+        throw new Error('Method not implemented');
+      }
 
-    if (!view) {
-      return new Response('Not Acceptable', {
-        status: 406,
-        statusText: 'NOT ACCEPTABLE',
-      });
+      /**
+       * Reads a resource.
+       *
+       * @param {string} id
+       * @returns {Promise<Object|null>}
+       */
+      async find(id) {
+        throw new Error('Method not implemented');
+      }
+
+      /**
+       * Updates a resource.
+       *
+       * @param {string} id
+       * @param {Object} data
+       * @returns {Promise<Object>}
+       */
+      async update(id, data) {
+        throw new Error('Method not implemented');
+      }
+
+      /**
+       * Deletes a resource.
+       *
+       * @param {string} id
+       * @returns {Promise<void>}
+       */
+      async delete(id) {
+        throw new Error('Method not implemented');
+      }
     }
 
-    return view.render(record);
-  }
+    /**
+     * In-memory persistence implementation.
+     */
+    class MemoryFeedWriter extends IFeedWriter {
+      /**
+       * @type {Map<string, Object>}
+       */
+      #store = new Map();
 
-  /**
-   * Resolves an incoming request to a route.
-   *
-   * @param {Request} req
-   * @returns {Promise<Response>}
-   */
-  async resolve(req) {
-    try {
-      const candidates = [];
+      /**
+       * Creates a resource.
+       *
+       * @param {Object} data
+       * @returns {Promise<Object>}
+       */
+      async create(data) {
+        const record = {
+          id: crypto.randomUUID(),
+          created_at: new Date().toISOString(),
+          ...data,
+        };
 
-      for (const route of this.#routes) {
-        const match = route.pattern.exec(req.url);
+        this.#store.set(record.id, record);
 
-        if (match) {
-          candidates.push({
-            route,
-            match,
-          });
+        return record;
+      }
+
+      /**
+       * Reads a resource.
+       *
+       * @param {object} options
+       * @param {string} options.id
+       * @returns {Promise<Object|null>}
+       */
+      async find({ id }) {
+        if (!id) {
+          return Array.from(this.#store.values());
         }
+        return this.#store.get(id) ?? null;
       }
 
-      //
-      // No matching resource.
-      //
-      if (candidates.length === 0) {
-        return new Response('Not Found', {
-          status: 404,
-          statusText: 'NOT FOUND',
-        });
-      }
+      /**
+       * Updates a resource.
+       *
+       * @param {string} id
+       * @param {Object} data
+       * @returns {Promise<Object>}
+       */
+      async update(id, data) {
+        const record = this.#store.get(id);
 
-      //
-      // Matching resource and method.
-      //
-      for (const candidate of candidates) {
-        if (candidate.route.method === req.method) {
-          return this.#dispatch(candidate.route, req, candidate.match);
+        if (!record) {
+          throw new Error(`Resource not found: ${id}`);
         }
+
+        Object.assign(record, data);
+
+        return record;
       }
 
-      //
-      // Matching resource, unsupported method.
-      //
-      const { allowedMethods } = candidates[0].route;
+      /**
+       * Deletes a resource.
+       *
+       * @param {string} id
+       * @returns {Promise<void>}
+       */
+      async delete(id) {
+        this.#store.delete(id);
+      }
+    }
 
-      return new Response('Method Not Allowed', {
-        status: 405,
-        statusText: 'METHOD NOT ALLOWED',
-        headers: {
-          Allow: allowedMethods.join(', '),
-        },
-      });
-    } catch (ex) {
-      console.error(
-        `INTERNAL ERROR (Pistachio): ***EXCEPTION ENCOUNTERED*** while resolving request. See details -> ${ex.message}`
+    const router = new Pistachio();
+    router.resource('/feeds', new Feed(new MemoryFeedWriter()), {
+      collection: true,
+      allowedMethods: ['GET', 'POST'],
+      use: [logger],
+      views: [new ViewFeedJSON(), new ViewFeedCSV()],
+    });
+    /*
+    const req1 = new Request('http://localhost:8080/feeds', {
+      method: 'POST',
+      body: '{"foo": "bar"}',
+    });
+
+    const res1 = await router.resolve(req1);
+    const { id } = await res1.json();
+
+    const req2 = new Request(`http://localhost:8080/feeds/${id}`, {
+      method: 'GET',
+      headers: {
+        accept: 'application/json',
+      },
+    });
+
+    const res2 = await router.resolve(req2);
+
+    const req3 = new Request(
+      `http://localhost:8080/feeds/${id}/subscriptions`,
+      {
+        method: 'POST',
+        body: '{"topics": ["bar"]}',
+      }
+    );
+
+    const res3 = await router.resolve(req3);
+
+    const req4 = new Request(`http://localhost:8080/feeds/${id}`, {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+      },
+    });
+    */
+
+    fastify.all('*', async (req, reply) => {
+      const request = new Request(
+        `http://${req.headers.host}${req.url}`,
+        {
+          method: req.method,
+          headers: req.headers,
+          body:req.body == null
+      ? undefined
+      : JSON.stringify(req.body),
+        }
       );
-    }
-  }
-}
 
-/**
- * A compiled route definition produced by {@link Pistachio#resource}.
- *
- * Route definitions are the internal representation of HTTP resources.
- * They are generated once during resource registration and consumed by the
- * request resolver and dispatcher at runtime.
- *
- * @typedef {Object} RouteDefinition
- *
- * @property {string} method
- * The HTTP method handled by this route (e.g. `"GET"`, `"POST"`).
- *
- * @property {string} path
- * The route template used when registering the resource.
- *
- * @property {URLPattern} pattern
- * Compiled URL pattern used during request resolution.
- *
- * @property {Object} resource
- * The resource instance responsible for handling the request.
- *
- * @property {string} operation
- * The resource method invoked when this route is dispatched.
- *
- * @property {string} rel
- * The CRUD relationship describing how the result of the domain operation
- * should be persisted. This corresponds to a persistence method exposed by
- * the resource (typically `create`, `read`, `update`, `delete`, or `noop`).
- *
- * @property {boolean} [collection=false]
- * Indicates that the route was automatically generated as part of a
- * collection resource.
- *
- * @property {string[]} allowedMethods
- * The HTTP methods permitted for the resource. Used to determine whether
- * requests should result in `405 Method Not Allowed` responses and to
- * generate the `Allow` response header.
- *
- * @property {Function[]} use
- * Middleware executed before the route is invoked.
- *
- * @property {Object.<string, IResourceView>} views
- * Resource representations keyed by MIME type (for example
- * `"application/json"`). Used during content negotiation.
- */
+      const response = await router.resolve(request);
+
+      reply.status(response.status);
+
+      for (const [k, v] of response.headers) {
+        reply.header(k, v);
+      }
+
+      reply.send(response);
+    });
+
+    await fastify.listen({ port: 8000 });
+
+  } catch (ex) {
+    console.error(
+      `INTERNAL_ERROR (Main): Exception encountered. See details -> ${ex.message}`
+    );
+    fastify.log.error(err);
+    process.exit(1);
+  }
+})();
