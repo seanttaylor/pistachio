@@ -1,6 +1,52 @@
+/**
+ * Hypermedia resource router and runtime for exposing
+ * domain objects as navigable HTTP resource topologies.
+ *
+ * Pistachio compiles resource metadata into executable
+ * {@link RouteDefinition Routes}, resolves incoming
+ * requests, executes middleware and domain behavior,
+ * and renders negotiated representations through
+ * {@link IResourceView Views}.
+ *
+ * The framework intentionally separates:
+ *
+ * - the HTTP resource model,
+ * - the underlying object model, and
+ * - the persistence model.
+ *
+ * Resources may expose conventional CRUD operations,
+ * executable {@link ProcedureDefinition Procedures},
+ * and recursively nested {@link RelationDefinition Relations}
+ * without requiring direct correspondence to in-memory
+ * object structure.
+ *
+ * @example
+ * router.resource('/feeds', Feed, {
+ *   writer: new MemoryFeedWriter(),
+ *   views: [new ViewFeedJSON()]
+ * });
+ *
+ * @see {@link RouteDefinition}
+ * @see {@link RequestContext}
+ * @see {@link RelationDefinition}
+ * @see {@link ProcedureDefinition}
+ * @see {@link ResourceTopology}
+ * @see {@link IResourceView}
+ */
 export class Pistachio {
   #routes = [];
 
+  /**
+   * Registers a resource and compiles its HTTP topology
+   * @param {string} path
+   * @param {typeof Object} resource
+   * @param {Object} [options]
+   * @param {*} [options.writer]
+   * @param {Function[]} [options.use=[]]
+   * @param {IResourceView[]} [options.views=[]]
+   * @returns {RouteDefinition[]}
+   * @see {@link RouteDefinition}
+   */
   resource(path, resource, { writer, use = [], views = [] } = {}) {
     const routes = this.#compileResource(path, resource, {
       writer,
@@ -13,13 +59,38 @@ export class Pistachio {
     return routes;
   }
 
+  /**
+   * Compiles a resource definition into an executable route graph.
+   *
+   * Generates CRUD routes, domain procedures, and recursively
+   * defined relationship routes from a resource's HTTP metadata.
+   * @param {string} root
+   * Root collection path (e.g. `"/feeds"`).
+   * 
+   * @param {typeof Object} resource
+   * Resource constructor being registered.
+   *
+   * @param {Object} [options]
+   * @param {*} [options.writer]
+   * Persistence backend attached to the resource.
+   *
+   * @param {Function[]} [options.use=[]]
+   * Middleware applied to all compiled routes.
+   *
+   * @param {IResourceView[]} [options.views=[]]
+   * Resource representations available during content negotiation.
+   *
+   * @returns {RouteDefinition[]}
+   * Compiled routes for the resource topology.
+   * @see {@link RouteDefinition}
+   * @see {@link ProcedureDefinition}
+   * @see {@link RelationDefinition}
+   * @see {@link ResourceTopology}
+   */
   #compileResource(root, resource, { writer, use = [], views = [] } = {}) {
     const routes = [];
-
     const http = resource.http ?? resource.HTTP ?? {};
-
     const methods = http.allowedMethods ?? ['GET', 'POST', 'PUT', 'DELETE'];
-
     const viewMap = Object.fromEntries(views.map((v) => [v.contentType, v]));
 
     resource.backend(writer);
@@ -48,6 +119,29 @@ export class Pistachio {
     return routes;
   }
 
+  /**
+   * Compiles conventional CRUD routes for a resource collection.
+   *
+   * Generates collection and instance endpoints based on the
+   * HTTP methods permitted by the resource.
+   * @param {RouteDefinition[]} routes
+   * Route list.
+   *
+   * @param {string} root
+   * Root collection path (e.g. `"/feeds"`).
+   *
+   * @param {typeof Object} resource
+   * Resource constructor being instrumented.
+   *
+   * @param {string[]} methods
+   * Allowed HTTP methods for the resource.
+   *
+   * @param {Object} shared
+   * Shared route metadata applied to all generated routes.
+   * @returns {void}
+   * @see {@link RouteDefinition}
+   * @see {@link ResourceTopology}
+   */
   #compileCrud(routes, root, resource, methods, shared) {
     if (methods.includes('GET')) {
       routes.push({
@@ -153,6 +247,32 @@ export class Pistachio {
     }
   }
 
+  /**
+   * Compiles domain procedures into executable route definitions.
+   *
+   * Procedures represent behaviors exposed by a resource or relation
+   * and map HTTP methods to object methods without affecting URL shape.
+   *
+   * @param {RouteDefinition[]} routes
+   * Route list.
+   *
+   * @param {string} root
+   * Resource path against which procedures are instrumented.
+   *
+   * @param {typeof Object} resource
+   * Resource constructor being instrumented.
+   *
+   * @param {Object.<string, ProcedureDefinition>} proc
+   * Procedure metadata keyed by object method name.
+   *
+   * @param {Object} shared
+   * Shared route metadata applied to all generated routes.
+   *
+   * @returns {void}
+   * @see {@link ProcedureDefinition}
+   * @see {@link RouteDefinition}
+   * @see {@link RelationDefinition}
+  */
   #compileProc(routes, root, resource, proc, shared) {
     for (const [operation, definition] of Object.entries(proc)) {
       routes.push({
@@ -181,6 +301,35 @@ export class Pistachio {
     }
   }
 
+  /**
+   * Compiles relationship metadata into a recursive resource topology.
+   *
+   * Generates collection nodes, optional instance nodes, attaches
+   * procedures to existing relation resources, and recursively
+   * instruments nested relations.
+   *
+   * @param {RouteDefinition[]} routes
+   * Route list.
+   *
+   * @param {string} root
+   * Root path from which relation routes are generated.
+   *
+   * @param {typeof Object} resource
+   * Resource constructor being instrumented.
+   *
+   * @param {Object.<string, RelationDefinition>} relations
+   * Relation metadata keyed by relation name.
+   *
+   * @param {Object} shared
+   * Shared route metadata applied to all generated routes.
+   *
+   * @returns {void}
+   *
+   * @see {@link RelationDefinition}
+   * @see {@link RouteDefinition}
+   * @see {@link ResourceInstance}
+   * @see {@link ProcedureDefinition}
+   */
   #compileRelations(routes, root, resource, relations, shared) {
     for (const [name, definition] of Object.entries(relations)) {
       //
@@ -287,6 +436,32 @@ export class Pistachio {
     }
   }
 
+  /**
+   * Executes a middleware pipeline and ultimately invokes the
+   * terminal route handler.
+   *
+   * Middleware is executed sequentially and receives a shared
+   * {@link RequestContext} along with a `next()` callback used
+   * to advance pipeline execution.
+   *
+   * Exceptions raised by middleware or route invocation are
+   * converted into `500 Internal Error` responses.
+   *
+   * @param {Middleware[]} middleware
+   * Ordered middleware chain.
+   *
+   * @param {RequestContext} ctx
+   * Request execution context.
+   *
+   * @param {function(): Promise<Response>} terminal
+   * Terminal route invocation executed once middleware has
+   * completed.
+   *
+   * @returns {Promise<Response>}
+   * @see {@link RequestContext}
+   * @see {@link Middleware}
+   * @see {@link RouteDefinition}
+   */
   async #pipeline(middleware, ctx, terminal) {
     let index = -1;
 
@@ -324,6 +499,20 @@ export class Pistachio {
     return run(0);
   }
 
+  /**
+   * Parses a request body when present.
+   *
+   * Requests that cannot legally contain a body, or explicitly
+   * indicate an empty payload, resolve to `null`.
+   *
+   * @param {Request} req
+   * Incoming HTTP request.
+   *
+   * @returns {Promise<?Object>}
+   * Parsed request payload or `null`.
+   * 
+   * @see {@link RequestContext}
+   */
   async #parseBody(req) {
     if (req.method === 'GET') {
       return null;
@@ -338,6 +527,29 @@ export class Pistachio {
     return req.json();
   }
 
+  /**
+   * Invokes the behavior represented by a compiled route.
+   *
+   * Resolves root resources, relations, relation instances,
+   * procedures, and conventional CRUD operations before
+   * rendering the result using content negotiation.
+   *
+   * This method represents the execution boundary between the
+   * HTTP resource model and the underlying object model.
+   *
+   * @param {RouteDefinition} route
+   * Compiled route being executed.
+   *
+   * @param {RequestContext} ctx
+   * Request execution context.
+   *
+   * @returns {Promise<Response>}
+   * @see {@link RouteDefinition}
+   * @see {@link RequestContext}
+   * @see {@link ProcedureDefinition}
+   * @see {@link RelationDefinition}
+   * @see {@link IResourceView}
+   */
   async #invoke(route, ctx) {
 
     try {
@@ -353,7 +565,7 @@ export class Pistachio {
       });
 
       if (!root) {
-        return new Response('Not Found', {
+        return new Response('NOT FOUND', {
           status: 404,
         });
       }
@@ -384,7 +596,7 @@ export class Pistachio {
       //
       if (route.proc) {
         if (!result) {
-          return new Response('Not Found', {
+          return new Response('NOT FOUND', {
             status: 404,
           });
         }
@@ -420,7 +632,7 @@ export class Pistachio {
       });
 
       if (!resource) {
-        return new Response('Not Found', {
+        return new Response('NOT FOUND', {
           status: 404,
         });
       }
@@ -500,7 +712,7 @@ export class Pistachio {
     }
     
     if (!result) {
-      return new Response('Not Found', {
+      return new Response('NOT FOUND', {
         status: 404,
       });
     }
@@ -508,7 +720,7 @@ export class Pistachio {
     const view = this.#selectView(route, ctx.request);
 
     if (!view) {
-      return new Response('Not Acceptable', {
+      return new Response('NOT ACCEPTABLE', {
         status: 406,
       });
     }
@@ -523,6 +735,26 @@ export class Pistachio {
    
   }
 
+  /**
+   * Selects the most appropriate representation for a request.
+   *
+   * Uses the request's `Accept` header to perform simple
+   * content negotiation, falling back to JSON when no
+   * preference is supplied.
+   *
+   * @param {RouteDefinition} route
+   * Compiled route definition.
+   *
+   * @param {Request} req
+   * Incoming HTTP request.
+   *
+   * @returns {?IResourceView}
+   * Selected representation or `null` if no suitable
+   * representation exists.
+   *
+   * @see {@link RouteDefinition}
+   * @see {@link IResourceView}
+   */
   #selectView(route, req) {
     const accept = req.headers.get('accept');
 
@@ -533,6 +765,25 @@ export class Pistachio {
     return route.views[accept] ?? route.views['application/json'] ?? null;
   }
 
+  /**
+   * Resolves an incoming HTTP request to a compiled route.
+   *
+   * Performs route matching, method negotiation, and dispatches
+   * execution to the middleware and invocation pipeline.
+   *
+   * Returns appropriate HTTP error responses when no matching
+   * resource exists or when the target resource does not support
+   * the requested method.
+   *
+   * @param {Request} req
+   * Incoming HTTP request.
+   *
+   * @returns {Promise<Response>}
+   *
+   * @see {@link InvocationLifecycle}
+   * @see {@link RouteDefinition}
+   * @see {@link RequestContext}
+   */
   async resolve(req) {
     try {
       const candidates = [];
@@ -562,7 +813,7 @@ export class Pistachio {
 
       const { allowedMethods } = candidates[0].route;
 
-      return new Response('Method Not Allowed', {
+      return new Response('METHOD NOT ALLOWED', {
         status: 405,
 
         headers: {
@@ -574,6 +825,31 @@ export class Pistachio {
     }
   }
 
+  /**
+   * Constructs a request execution context and dispatches the
+   * request through the middleware and invocation pipeline.
+   *
+   * The dispatch phase materializes transient request state
+   * (parameters, query values, body, route metadata) into a
+   * {@link RequestContext} instance consumed throughout the
+   * remainder of the request lifecycle.
+   *
+   * @param {RouteDefinition} route
+   * Resolved route definition.
+   *
+   * @param {Request} req
+   * Incoming HTTP request.
+   *
+   * @param {URLPatternResult} match
+   * URL pattern match produced during route resolution.
+   *
+   * @returns {Promise<Response>}
+   *
+   * @see {@link RequestContext}
+   * @see {@link RouteDefinition}
+   * @see {@link InvocationLifecycle}
+   * @see {@link ResolutionLifecycle}
+   */
   async #dispatch(route, req, match) {
     const ctx = {
       request: req,
@@ -591,50 +867,3 @@ export class Pistachio {
   }
 }
 
-/**
- * A compiled route definition produced by {@link Pistachio#resource}.
- *
- * Route definitions are the internal representation of HTTP resources.
- * They are generated once during resource registration and consumed by the
- * request resolver and dispatcher at runtime.
- *
- * @typedef {Object} RouteDefinition
- *
- * @property {string} method
- * The HTTP method handled by this route (e.g. `"GET"`, `"POST"`).
- *
- * @property {string} path
- * The route template used when registering the resource.
- *
- * @property {URLPattern} pattern
- * Compiled URL pattern used during request resolution.
- *
- * @property {Object} resource
- * The resource instance responsible for handling the request.
- *
- * @property {string} operation
- * The resource method invoked when this route is dispatched.
- *
- * @property {boolean} [collection=false]
- * Indicates that the route was automatically generated as part of a
- * collection resource.
- *
- * @property {string[]} allowedMethods
- * The HTTP methods permitted for the resource. Used to determine whether
- * requests should result in `405 Method Not Allowed` responses and to
- * generate the `Allow` response header.
- *
- * @property {Function[]} use
- * Middleware executed before the route is invoked.
- *
- * @property {Object.<string, IResourceView>} views
- * Resource representations keyed by MIME type (for example
- * `"application/json"`). Used during content negotiation.
- */
-
-/**
- * Parses a request body when present.
- *
- * @param {Request} req
- * @returns {Promise<?Object>}
- */

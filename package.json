@@ -1,7 +1,7 @@
 {
   "name": "pistachio",
   "version": "2.0.0",
-  "description": "",
+  "description": "An Object-Oriented Hypermedia API framework",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

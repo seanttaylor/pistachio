@@ -20,44 +20,6 @@ const defaultPublisher = (originalEvent, derivedEvent) => {
   };
 };
 
-/**
- * @callback IntegrationHandler
- * @param {{ type: string, [key: string]: * }} requestBody
- * @returns {Object}
- */
-
-/**
- * A map of integration event types to their handlers.
- *
- * @typedef {Object.<string, IntegrationHandler>} IntegrationMap
- */
-
-/**
- * Houses mapping of external event types to functions that can
- * generate a digest of resource data associated with such events
- * @type {IntegrationMap}
- */
-const integrationMap = {
-  /**
-   * @param {Object} requestBody - body of an incoming HTTP request announcing
-   * an external event
-   * @returns {Object}
-   */
-  [Integrations.GOOGLE_DRIVE](requestBody) {
-    const { id, type, subject } = requestBody;
-    const match = {
-      and: [
-        {
-          '==': [{ var: 'rel' }, 'file'],
-        },
-        {
-          '==': [{ var: 'id' }, id],
-        },
-      ],
-    };
-    return { id, type, subject, match };
-  },
-};
 
 /**
  * See https://stackblitz.com/edit/js-duh7w4h2?file=index.js from public/private key generation in browser.
@@ -162,12 +124,6 @@ export class Feed {
    */
   #canonical;
 
-  /**
-   * Houses semantic relationships between resource-oriented events on
-   * a specified integration provider and operationally meaninful events in Cerebro
-   * @type {Object}
-   */
-  #eventBindings = {};
 
   constructor({
     id = crypto.randomUUID(),
@@ -193,8 +149,6 @@ export class Feed {
     this.#canonical = canonical;
     this.#subscriptions = subscriptions instanceof SubscriptionCollection ?
     subscriptions : new SubscriptionCollection(this, subscriptions);
-    
-    
   }
 
   static HTTP = {
@@ -399,107 +353,6 @@ export class Feed {
   }
 
   /**
-   * @param {Object} req - an incoming HTTP request
-   */
-  ingest(req) {
-    try {
-      // Non-canonical feeds cannot define ingress semantics.
-      if (!this.#canonical) {
-        return null;
-      }
-
-      const integrationType = req.headers['x-cerebro-integration'];
-      const resourceDigest = integrationMap[integrationType](req.body);
-      const bindings = this.#eventBindings[resourceDigest.type];
-      const matchedBindings = bindings.reduce((res, b) => {
-        if (jsonLogic.apply(resourceDigest.match, b.resource)) {
-          res.push(b);
-          return res;
-        }
-        return res;
-      }, []);
-
-      matchedBindings.forEach((b) => {
-        const mappedEventData = jsonpatch.applyPatch(
-          Object.assign({}, req.body),
-          b.mapping
-        ).newDocument;
-        const { meta, payload } = mappedEventData;
-        const { detail: event } = new SystemEvent(b.is, payload, {
-          tags: ['mapped'],
-          ...meta,
-        });
-
-        this.publish(event);
-      });
-    } catch (ex) {
-      console.error(
-        `INTERNAL_ERROR (Feed): Exception encountered while ingesting event. See details -> ${ex.message}`
-      );
-    }
-  }
-
-  /**
-   * Defines a semantic relationship between an external integration event
-   * and a canonical Cerebro event.
-   *
-   * Only canonical feeds may register ingress definitions.
-   *
-   * @param {object} options
-   * @param {string} options.integration
-   * @param {string} options.externalEvent
-   * @param {string} options.is
-   * @param {string} options.resource.id
-   * @param {object[]} [options.resource.mapping]
-   * @param {object} [options.resource.rel]
-   * @param {string} [options.resource.id]
-   * @param {boolean} [options.resource.includeAttachment=false]
-   *
-   * @returns {?Object}
-   */
-  define({ integration, externalEvent, is, resource = {}, mapping = [] }) {
-    // Non-canonical feeds cannot define ingress semantics.
-    if (!this.#canonical) {
-      return null;
-    }
-
-    // Minimal validation.
-    if (!integration) {
-      throw new Error('define() requires an integration');
-    }
-
-    if (!externalEvent) {
-      throw new Error('define() requires an externalEvent');
-    }
-
-    if (!is) {
-      throw new Error('define() requires an internal event via `is`');
-    }
-
-    const binding = {
-      id: crypto.randomUUID(),
-      integration,
-      externalEvent,
-      is,
-      resource: {
-        rel: resource.rel ?? false,
-        id: resource.id,
-        includeAttachment: resource.includeAttachment ?? false,
-      },
-      mapping,
-      createdAt: new Date().toISOString(),
-    };
-
-    if (!this.#eventBindings[externalEvent]) {
-      this.#eventBindings[externalEvent] = [binding];
-    } else {
-      this.#eventBindings[binding.id].push(binding);
-    }
-
-    return binding;
-  }
-
-  /**
    * Removes a subscriber feed from the feed registry.
    *
    * @param {string} feedId - Unique identifier of the subscriber feed.
@@ -561,21 +414,30 @@ export class Feed {
   }
 
   static async findOne({ id }) {
-    const [record] = await Feed.writer.read({id});
-
-    const f = Feed.from(record);
-    return f;
+    try { 
+      const [record] = await Feed.writer.read({id});
+      const f = Feed.from(record);
+      return f;
+    } catch(ex) {
+      console.error(
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find record (${id}). See details -> ${ex.message}`
+      );
+    }
   }
   static async findAll(options) {
-    const recordList = await Feed.writer.read();
-    return recordList;
+    try {
+      const recordList = await Feed.writer.read();
+      return recordList;
+    } catch(ex) {
+      console.error(
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find records. See details -> ${ex.message}`
+      );
+    }
   }
 
   static async updateOne({ id, instance }) {
     try {
-      const r = await Feed.writer.update(id, instance.toJSON());
-
-      console.log('updatedRecord', r);
+      await Feed.writer.update(id, instance.toJSON());
     } catch (ex) {
       console.error(
         `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not update record (${id}) See details -> ${ex.message}`

@@ -20,42 +20,6 @@ import Fastify from 'fastify';
       views: [new ViewFeedJSON(), new ViewFeedCSV()],
     });
 
-    /*
-    const req1 = new Request('http://localhost:8080/feeds', {
-      method: 'POST',
-      body: '{"foo": "bar"}',
-    });
-
-    const res1 = await router.resolve(req1);
-    const { id } = await res1.json();
-
-    const req2 = new Request(`http://localhost:8080/feeds/${id}`, {
-      method: 'GET',
-      headers: {
-        accept: 'application/json',
-      },
-    });
-
-    const res2 = await router.resolve(req2);
-
-    const req3 = new Request(
-      `http://localhost:8080/feeds/${id}/subscriptions`,
-      {
-        method: 'POST',
-        body: '{"topics": ["bar"]}',
-      }
-    );
-
-    const res3 = await router.resolve(req3);
-
-    const req4 = new Request(`http://localhost:8080/feeds/${id}`, {
-      method: 'POST',
-      headers: {
-        accept: 'application/json',
-      },
-    });
-    */
-
     fastify.all('*', async (req, reply) => {
       const request = new Request(
         `http://${req.headers.host}${req.url}`,
