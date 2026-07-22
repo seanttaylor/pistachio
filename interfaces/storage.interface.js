@@ -1,7 +1,7 @@
 /**
- * Defines the persistence contract required by Feed.
+ * @see {@link StorageProvider}
  */
-class IFeedWriter {
+export class IStorageProvider {
   /**
    * Creates a resource.
    *
@@ -45,9 +45,10 @@ class IFeedWriter {
 }
 
 /**
- * In-memory persistence implementation.
+ * @implements {StorageProvider}
+ * @see {@link StorageProvider}
  */
-export class MemoryFeedWriter extends IFeedWriter {
+export class MemoryStorageProvider extends IStorageProvider {
   /**
    * @type {Map<string, Object>}
    */

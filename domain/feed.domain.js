@@ -1,6 +1,5 @@
 import { Subscription, SubscriptionCollection } from './subscription.domain.js';
 import { SystemEvent } from '../system-event.js';
-import { Integrations } from '../integrations.js';
 
 import jsonLogic from 'json-logic-js';
 import * as jsonpatch from 'fast-json-patch';
@@ -124,6 +123,11 @@ export class Feed {
    */
   #canonical;
 
+  /**
+   * Indicates what an domain entity _is_ for consumers
+   * @type {string}
+   */
+  #rel = 'feed'
 
   constructor({
     id = crypto.randomUUID(),
@@ -237,6 +241,13 @@ export class Feed {
   }
 
   /**
+   * @returns {string}
+   */
+  get rel() {
+    return this.#rel;
+  }
+
+  /**
    * Serializes feed metadata into a plain JSON object.
    *
    * @returns {Object}
@@ -250,6 +261,7 @@ export class Feed {
       createdAt: this.#createdAt,
       size: this.size,
       subscriptions: this.subscriptions,
+      rel: this.rel
     };
   }
 
@@ -272,7 +284,7 @@ export class Feed {
    * @returns {Subscription}
    */
   async subscribe(options) {
-    const subscribingFeed = await Feed.writer.read({ id });
+    const subscribingFeed = await Feed.storageProvider.read({ id });
     try {
       const sub = this.#subscriptions.add(options, subscribingFeed);
 
@@ -396,13 +408,13 @@ export class Feed {
       schema,
     });
 
-    await Feed.writer.create(f.toJSON());
+    await Feed.storageProvider.create(f.toJSON());
     return f;
   }
 
-  static backend(writer) {
-    if (!Feed.writer) {
-      Feed.writer = writer;
+  static backend(storageProvider) {
+    if (!Feed.storageProvider) {
+      Feed.storageProvider = storageProvider;
     }
   }
 
@@ -415,32 +427,32 @@ export class Feed {
 
   static async findOne({ id }) {
     try { 
-      const [record] = await Feed.writer.read({id});
+      const [record] = await Feed.storageProvider.read({id});
       const f = Feed.from(record);
       return f;
     } catch(ex) {
       console.error(
-        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find record (${id}). See details -> ${ex.message}`
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find Feed record (${id}). See details -> ${ex.message}`
       );
     }
   }
   static async findAll(options) {
     try {
-      const recordList = await Feed.writer.read();
+      const recordList = await Feed.storageProvider.read();
       return recordList;
     } catch(ex) {
       console.error(
-        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find records. See details -> ${ex.message}`
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find Feed records. See details -> ${ex.message}`
       );
     }
   }
 
   static async updateOne({ id, instance }) {
     try {
-      await Feed.writer.update(id, instance.toJSON());
+      await Feed.storageProvider.update(id, instance.toJSON());
     } catch (ex) {
       console.error(
-        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not update record (${id}) See details -> ${ex.message}`
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not update Feed record (${id}) See details -> ${ex.message}`
       );
     }
   }

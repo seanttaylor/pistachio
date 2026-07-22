@@ -88,3 +88,52 @@
  * @see {@link ProcedureDefinition}
  */
 
+/**
+ * Managed collection of related entities.
+ *
+ * Collections maintain ownership semantics,
+ * identity-based lookup facilities, and collection
+ * behavior beyond simple array operations.
+ *
+ * @typedef {Object} ResourceCollection
+ *
+ * @property {Object} owner
+ * @property {number} size
+ * @property {function(string): boolean} has
+ * @property {function(string): Object} get
+ * @property {function(Object): Object} add
+ * @property {function(string): Object} remove
+ * @property {function(): Object[]} toArray
+ * @property {function(): Object[]} toJSON
+ */
+
+/**
+ * Object owning a `ResourceCollection`.
+ *
+ * Ownership relationships make entity graphs explicit and
+ * allow collections to coordinate behavior and persistence
+ * with their parent resources.
+ *
+ * @typedef {Object} CollectionOwner
+ * @see {@link ResourceCollection}
+ */
+
+/**
+ * Constructor capable of materializing entity instances.
+ *
+ * @typedef {Object} EntityConstructor
+ *
+ * @property {function(Object): Object} of
+ * Creates an entity instance from a representation.
+ * 
+ * @see {@link ResourceCollection}
+ */
+
+/**
+ * @typedef {Object} ResourceCollectionOptions
+ *
+ * @property {CollectionOwner} owner
+ * @property {Object[] | ResourceCollection<T>} [items=[]]
+ * @see {@link ResourceCollection}
+ */
+

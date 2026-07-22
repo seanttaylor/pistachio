@@ -1,45 +1,6 @@
 import { json2csv } from 'json-2-csv';
 
 /**
- *
- */
-export class IResource {
-  #writer;
-
-  constructor(writer) {
-    this.#writer = writer;
-  }
-
-  /**
-   * @param {object} params
-   */
-  create(params) {
-    return this.#writer.create(params);
-  }
-
-  /**
-   * @param {object} params
-   */
-  find(params) {
-    return this.#writer.find(params);
-  }
-
-  /**
-   * @param {object} params
-   */
-  update(params) {
-    return this.#writer.update(params);
-  }
-
-  /**
-   * @param {object} params
-   */
-  delete(params) {
-    return this.#writer.delete(params);
-  }
-}
-
-/**
  * Abstract base class representing a renderable resource
  * representation.
  *
@@ -58,7 +19,6 @@ class IResourceView {
   #contentType;
   #name;
   #payload;
-  #renderFn;
   #version;
 
   /**
@@ -71,7 +31,6 @@ class IResourceView {
     this.#name = options.name;
     this.#payload;
     this.#version = options.version;
-    this.#renderFn = options.renderFn;
   }
 
   get name() {

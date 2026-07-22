@@ -7,6 +7,7 @@
         {
             "name": "Launch Program",
             "program": "${workspaceFolder}/index.js",
+            "envFile": "${workspaceFolder}/.env", 
             "request": "launch",
             "skipFiles": [
                 "<node_internals>/**"

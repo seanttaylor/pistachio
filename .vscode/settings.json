@@ -113,7 +113,11 @@
      * Format a file on save.
      * Defaults to true.
      */
-    // "editor.formatOnSave": true,
+    "editor.formatOnSave": true,
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+    "eslint.validate": [
+      "javascript"
+    ],
     /**
      * Controls whether the editor should automatically format the line after typing.
      * Defaults to false.

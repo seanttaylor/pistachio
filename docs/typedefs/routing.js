@@ -28,12 +28,25 @@
 /**
  * Request middleware executed during route dispatch.
  *
+ * Middleware participate in an asynchronous execution pipeline.
+ * They may inspect or modify the request context before delegating
+ * execution to the next middleware in the chain.
+ *
+ * Middleware may also terminate request processing early by
+ * returning a {@link Response} without invoking `next()`.
+ *
  * @callback Middleware
  *
  * @param {RequestContext} ctx
+ * Mutable request context shared across middleware and route
+ * invocation.
+ *
  * @param {function(): Promise<Response>} next
+ * Invokes the next middleware in the pipeline.
  *
  * @returns {Promise<Response>}
+ * The response produced by downstream middleware, route invocation,
+ * or the middleware itself.
  */
 
 /**
@@ -76,4 +89,3 @@
  * Resource representations keyed by MIME type (for example
  * `"application/json"`). Used during content negotiation.
  */
-

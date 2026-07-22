@@ -1,3 +1,5 @@
+import { computePatch } from './helpers.js';
+
 /**
  * Hypermedia resource router and runtime for exposing
  * domain objects as navigable HTTP resource topologies.
@@ -22,7 +24,7 @@
  *
  * @example
  * router.resource('/feeds', Feed, {
- *   writer: new MemoryFeedWriter(),
+ *   storageProvider: new MemoryFeedWriter(),
  *   views: [new ViewFeedJSON()]
  * });
  *
@@ -41,15 +43,15 @@ export class Pistachio {
    * @param {string} path
    * @param {typeof Object} resource
    * @param {Object} [options]
-   * @param {*} [options.writer]
+   * @param {*} [options.storageProvider]
    * @param {Function[]} [options.use=[]]
    * @param {IResourceView[]} [options.views=[]]
    * @returns {RouteDefinition[]}
    * @see {@link RouteDefinition}
    */
-  resource(path, resource, { writer, use = [], views = [] } = {}) {
+  resource(path, resource, { storageProvider, use = [], views = [] } = {}) {
     const routes = this.#compileResource(path, resource, {
-      writer,
+      storageProvider,
       use,
       views,
     });
@@ -66,12 +68,12 @@ export class Pistachio {
    * defined relationship routes from a resource's HTTP metadata.
    * @param {string} root
    * Root collection path (e.g. `"/feeds"`).
-   * 
+   *
    * @param {typeof Object} resource
    * Resource constructor being registered.
    *
    * @param {Object} [options]
-   * @param {*} [options.writer]
+   * @param {*} [options.storageProvider]
    * Persistence backend attached to the resource.
    *
    * @param {Function[]} [options.use=[]]
@@ -87,30 +89,30 @@ export class Pistachio {
    * @see {@link RelationDefinition}
    * @see {@link ResourceTopology}
    */
-  #compileResource(root, resource, { writer, use = [], views = [] } = {}) {
+  #compileResource(root, resource, { storageProvider, use = [], views = [] } = {}) {
     const routes = [];
     const http = resource.http ?? resource.HTTP ?? {};
     const methods = http.allowedMethods ?? ['GET', 'POST', 'PUT', 'DELETE'];
     const viewMap = Object.fromEntries(views.map((v) => [v.contentType, v]));
 
-    resource.backend(writer);
+    resource.backend(storageProvider);
 
     this.#compileCrud(routes, root, resource, methods, {
-      writer,
+      storageProvider,
       use,
       views: viewMap,
       allowedMethods: methods,
     });
 
     this.#compileProc(routes, root, resource, http.proc ?? {}, {
-      writer,
+      storageProvider,
       use,
       views: viewMap,
       allowedMethods: methods,
     });
 
     this.#compileRelations(routes, root, resource, http.rel ?? {}, {
-      writer,
+      storageProvider,
       use,
       views: viewMap,
       allowedMethods: methods,
@@ -272,7 +274,7 @@ export class Pistachio {
    * @see {@link ProcedureDefinition}
    * @see {@link RouteDefinition}
    * @see {@link RelationDefinition}
-  */
+   */
   #compileProc(routes, root, resource, proc, shared) {
     for (const [operation, definition] of Object.entries(proc)) {
       routes.push({
@@ -454,7 +456,7 @@ export class Pistachio {
    * Request execution context.
    *
    * @param {function(): Promise<Response>} terminal
-   * Terminal route invocation executed once middleware has
+   * Terminal route invocation executed once all middleware has
    * completed.
    *
    * @returns {Promise<Response>}
@@ -467,7 +469,7 @@ export class Pistachio {
 
     const run = async (i) => {
       if (i <= index) {
-        throw new Error('next() called multiple times');
+        throw new Error('next() has already been called this request');
       }
 
       index = i;
@@ -475,8 +477,10 @@ export class Pistachio {
       if (i === middleware.length) {
         try {
           return terminal();
-        } catch(ex) {
-          console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation (${ctx.route.path}) See details -> ${ex.message}`);
+        } catch (ex) {
+          console.error(
+            `INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation on path (${ctx.route.path}) See details -> ${ex.message}`
+          );
           return new Response('INTERNAL ERROR', {
             status: 500,
           });
@@ -488,7 +492,9 @@ export class Pistachio {
       try {
         return await fn(ctx, () => run(i + 1));
       } catch (ex) {
-        console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** while executing the route (${ctx.route.path}) See details -> ${ex.message}`);
+        console.error(
+          `INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** while executing middleware (${fn.name}) See details -> ${ex.message}`
+        );
 
         return new Response('INTERNAL ERROR', {
           status: 500,
@@ -510,7 +516,7 @@ export class Pistachio {
    *
    * @returns {Promise<?Object>}
    * Parsed request payload or `null`.
-   * 
+   *
    * @see {@link RequestContext}
    */
   async #parseBody(req) {
@@ -551,51 +557,86 @@ export class Pistachio {
    * @see {@link IResourceView}
    */
   async #invoke(route, ctx) {
-
     try {
-    let result;
-    let r;
+      let result;
+      let r;
 
-    //
-    // Relation routes
-    //
-    if (route.relation) {
-      const root = await route.resource.findOne({
-        id: ctx.params.id,
-      });
-
-      if (!root) {
-        return new Response('NOT FOUND', {
-          status: 404,
+      //
+      // Relation routes
+      //
+      if (route.relation) {
+        const root = await route.resource.findOne({
+          id: ctx.params.id,
         });
+
+        if (!root) {
+          return new Response('NOT FOUND', {
+            status: 404,
+          });
+        }
+
+        let relation = root[route.relation.accessor];
+
+        if (typeof relation === 'function') {
+          relation = await relation.call(root);
+        }
+
+        //
+        // Collection relation
+        //
+        if (!route.instance) {
+          result = relation;
+        }
+
+        //
+        // Relation instance
+        //
+        else {
+          const key = route.relation.id || `${route.relationName}Id`;
+          result = await route.relation.resolve(relation, ctx.params[key]);
+        }
+
+        //
+        // Procedure on relation
+        //
+        if (route.proc) {
+          if (!result) {
+            return new Response('NOT FOUND', {
+              status: 404,
+            });
+          }
+
+          let args = ctx.body ?? {};
+
+          if (route.interface) {
+            const candidate = {
+              params: ctx.params ?? {},
+
+              body: ctx.body ?? {},
+
+              query: ctx.query ?? {},
+
+              headers: Object.fromEntries(ctx.request.headers.entries()),
+            };
+
+            const patch = computePatch(candidate, route.interface);
+
+            args = jsonpatch.applyPatch({}, patch).newDocument;
+          }
+
+          result = await result[route.proc](args, root, root.constructor);
+        }
       }
 
-      let relation = root[route.relation.accessor];
+      //
+      // Root procedures
+      //
+      else if (route.proc) {
+        const resource = await route.resource.findOne({
+          id: ctx.params.id,
+        });
 
-      if (typeof relation === 'function') {
-        relation = await relation.call(root);
-      }
-
-      //
-      // Collection relation
-      //
-      if (!route.instance) {
-        result = relation;
-      }
-
-      //
-      // Relation instance
-      //
-      else {
-        const key = route.relation.id || `${route.relationName}Id`;
-        result = await route.relation.resolve(relation, ctx.params[key]);
-      }
-
-      //
-      // Procedure on relation
-      //
-      if (route.proc) {
-        if (!result) {
+        if (!resource) {
           return new Response('NOT FOUND', {
             status: 404,
           });
@@ -619,120 +660,91 @@ export class Pistachio {
           args = jsonpatch.applyPatch({}, patch).newDocument;
         }
 
-        result = await result[route.proc](args, root, root.constructor);
+        result = await resource[route.proc](args, root, root.constructor);
       }
-    }
 
-    //
-    // Root procedures
-    //
-    else if (route.proc) {
-      const resource = await route.resource.findOne({
-        id: ctx.params.id,
-      });
+      //
+      // Collection CRUD
+      //
+      else if (!route.instance) {
+        switch (route.method) {
+          case 'GET':
+            result = await route.resource.findAll(ctx.query);
+            break;
 
-      if (!resource) {
+          case 'POST':
+            r = await route.resource.of({
+              ...ctx.body,
+              storageProvider: route.storageProvider,
+            });
+
+            result = [r];
+            break;
+        }
+      }
+
+      //
+      // Instance CRUD
+      //
+      else {
+        switch (route.method) {
+          case 'GET':
+            r = await route.resource.findOne({
+              id: ctx.params.id,
+            });
+
+            result = [r];
+
+            break;
+
+          case 'PUT':
+            r = await route.resource.updateOne(
+              {
+                id: ctx.params.id,
+              },
+              ctx.body
+            );
+
+            result = [r];
+            break;
+
+          case 'DELETE':
+            result = await route.resource.deleteOne({
+              id: ctx.params.id,
+            });
+            break;
+        }
+      }
+
+      if (result instanceof Error) {
+        return new Response('INTERNAL ERROR', {
+          status: 500,
+        });
+      }
+
+      if (!result) {
         return new Response('NOT FOUND', {
           status: 404,
         });
       }
 
-      let args = ctx.body ?? {};
+      const view = this.#selectView(route, ctx.request);
 
-      if (route.interface) {
-        const candidate = {
-          params: ctx.params ?? {},
-
-          body: ctx.body ?? {},
-
-          query: ctx.query ?? {},
-
-          headers: Object.fromEntries(ctx.request.headers.entries()),
-        };
-
-        const patch = computePatch(candidate, route.interface);
-
-        args = jsonpatch.applyPatch({}, patch).newDocument;
+      if (!view) {
+        return new Response('NOT ACCEPTABLE', {
+          status: 406,
+        });
       }
 
-      result = await resource[route.proc](args, root, root.constructor);
-    }
-
-    //
-    // Collection CRUD
-    //
-    else if (!route.instance) {
-      switch (route.method) {
-        case 'GET':
-          result = await route.resource.findAll(ctx.query);
-          break;
-
-        case 'POST':
-          r = await route.resource.of({
-            ...ctx.body,
-            writer: route.writer,
-          });
-
-          result = [r];
-          break;
-      }
-    }
-
-    //
-    // Instance CRUD
-    //
-    else {
-      switch (route.method) {
-        case 'GET':
-          r = await route.resource.findOne({
-            id: ctx.params.id,
-          });
-
-          result = [r];
-          
-          break;
-
-        case 'PUT':
-          r = await route.resource.updateOne(
-            {
-              id: ctx.params.id,
-            },
-            ctx.body
-          );
-
-          result = [r];
-          break;
-
-        case 'DELETE':
-          result = await route.resource.deleteOne({
-            id: ctx.params.id,
-          });
-          break;
-      }
-    }
-    
-    if (!result) {
-      return new Response('NOT FOUND', {
-        status: 404,
-      });
-    }
-
-    const view = this.#selectView(route, ctx.request);
-
-    if (!view) {
-      return new Response('NOT ACCEPTABLE', {
-        status: 406,
-      });
-    }
-
-    return view.render(result);
-    } catch(ex) {
-      console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation. See details -> ${ex.message} `);
-       return new Response('INTERNAL ERROR', {
+      return view.render(result);
+    } catch (ex) {
+      console.error(
+        `INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation. See details -> ${ex.message} `
+      );
+      return new Response('INTERNAL ERROR', {
         status: 500,
       });
     }
-   
   }
 
   /**
@@ -800,14 +812,23 @@ export class Pistachio {
       }
 
       if (candidates.length === 0) {
-        return new Response('Not Found', {
+        return new Response('NOT FOUND', {
           status: 404,
         });
       }
 
       for (const candidate of candidates) {
         if (candidate.route.method === req.method) {
-          return this.#dispatch(candidate.route, req, candidate.match);
+          try {
+            return await this.#dispatch(candidate.route, req, candidate.match);
+          } catch (ex) {
+            console.error(
+              `INTERNAL ERROR: **EXCEPTION ENCOUNTERED** while dispatching route (${req.url}) See details -> ${ex.message}`
+            );
+            return new Response('INTERNAL ERROR', {
+              status: 500,
+            });
+          }
         }
       }
 
@@ -821,7 +842,12 @@ export class Pistachio {
         },
       });
     } catch (ex) {
-      console.error(ex);
+      console.error(
+        `INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** while resolving route (${req.url}) See details ->${ex.message}`
+      );
+      return new Response('INTERNAL ERROR', {
+        status: 500,
+      });
     }
   }
 
@@ -853,17 +879,12 @@ export class Pistachio {
   async #dispatch(route, req, match) {
     const ctx = {
       request: req,
-
       params: match.pathname.groups,
-
       body: await this.#parseBody(req),
-
       query: Object.fromEntries(new URL(req.url).searchParams.entries()),
-
       route,
     };
 
     return this.#pipeline(route.use, ctx, () => this.#invoke(route, ctx));
   }
 }
-

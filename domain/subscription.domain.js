@@ -1,3 +1,5 @@
+import { ResourceCollection } from '../pistachio/resource.js';
+
 export class Subscription {
   #createdAt = new Date().toISOString();
   #id;
@@ -100,85 +102,6 @@ export class Subscription {
   }
 }
 
-export class ResourceCollection {
-  #owner;
-  #items = new Map();
-
-  constructor(owner, items = []) {
-    this.#owner = owner;
-
-    if (items instanceof ResourceCollection) {
-      return items;
-    }
-
-    for (const item of items) {
-      this.add(item);
-    }
-  }
-
-  static entity;
-
-  get owner() {
-    return this.#owner;
-  }
-
-  get size() {
-    return this.#items.size;
-  }
-
-  get items() {
-    return this.#items.values();
-  }
-
-  has(id) {
-    return this.#items.has(id);
-  }
-
-  get(id) {
-    return this.#items.get(id);
-  }
-
-  add(data) {
-    const Entity = this.constructor.entity;
-    const instance = Entity.of(data);
-    this.#items.set(instance.id, instance);
-
-    return instance;
-  }
-
-  remove(id) {
-    const item = this.get(id);
-
-    this.#items.delete(id);
-
-    return item;
-  }
-
-  clear() {
-    this.#items.clear();
-  }
-
-  toArray() {
-    return [...this.#items.values()];
-  }
-
-  find(fn) {
-    return this.toArray().find(fn);
-  }
-
-  filter(fn) {
-    return new this.constructor(this.toArray().filter(fn));
-  }
-
-  [Symbol.iterator]() {
-    return this.#items.values();
-  }
-
-  toJSON() {
-    return this.toArray();
-  }
-}
-
 export class SubscriptionCollection extends ResourceCollection {
   #topicMap = {};
 
@@ -188,28 +111,42 @@ export class SubscriptionCollection extends ResourceCollection {
 
   static entity = Subscription;
 
-  async add(options, feed) {
-    console.log(options);
-    const subscription = super.add({
-      ...options,
-      feedName: this.owner.name,
-      feedId: this.owner.id,
-    });
+  /**
+   *
+   * @param {*} options
+   * @returns {Subscription | Error}
+   */
+  async add(options) {
+    try {
+      const subscription = super.add({
+        ...options,
+        feedName: this.owner.name,
+        feedId: this.owner.id,
+      });
 
-    await this.owner.constructor.updateOne({ id: this.owner.id, instance: this.owner });
+      await this.owner.constructor.updateOne({
+        id: this.owner.id,
+        instance: this.owner,
+      });
 
-    for (const topic of subscription.topics) {
-      if (!this.#topicMap[topic]) {
-        this.#topicMap[topic] = [];
+      for (const topic of subscription.topics) {
+        if (!this.#topicMap[topic]) {
+          this.#topicMap[topic] = [];
+        }
+
+        this.#topicMap[topic].push({
+          feed: this.owner,
+          subscription,
+        });
       }
 
-      this.#topicMap[topic].push({
-        feed,
-        subscription,
-      });
+      return subscription;
+    } catch (ex) {
+      console.error(
+        `INTERNAL ERROR (SubscriptionCollection): **EXCEPTION ENCOUNTERED** while adding subscription to feed (${this.owner.name}). See details -> ${ex.message}`
+      );
+      return new Error();
     }
-
-    return subscription;
   }
 
   to(topic) {
