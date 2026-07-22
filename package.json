@@ -1,7 +1,7 @@
 {
   "name": "pistachio",
-  "version": "1.0.0",
-  "description": "> A resource-oriented HTTP router for JavaScript and Deno.",
+  "version": "2.0.0",
+  "description": "",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",

@@ -53,6 +53,10 @@ export class MemoryFeedWriter extends IFeedWriter {
    */
   #store = new Map();
 
+  constructor() {
+    super();
+  }
+
   /**
    * Creates a resource.
    *
@@ -61,8 +65,6 @@ export class MemoryFeedWriter extends IFeedWriter {
    */
   async create(data) {
     const record = {
-      id: crypto.randomUUID(),
-      created_at: new Date().toISOString(),
       ...data,
     };
 
@@ -78,15 +80,15 @@ export class MemoryFeedWriter extends IFeedWriter {
    * @param {string} options.id
    * @returns {Promise<Object|null>}
    */
-  async read({ id }) {
+  async read({ id }={}) {
     if (!id) {
       return Array.from(this.#store.values());
     }
-    return this.#store.get(id) ?? null;
+    return [this.#store.get(id)] ?? null;
   }
 
   /**
-   * Updates a resource.
+   * Updates a record.
    *
    * @param {string} id
    * @param {Object} data
@@ -96,16 +98,16 @@ export class MemoryFeedWriter extends IFeedWriter {
     const record = this.#store.get(id);
 
     if (!record) {
-      throw new Error(`Resource not found: ${id}`);
+      throw new Error(`Record not found: ${id}`);
     }
-
-    Object.assign(record, data);
+    const updatedRecord = Object.assign(record, data);
+    this.#store.set(id, updatedRecord);
 
     return record;
   }
 
   /**
-   * Deletes a resource.
+   * Deletes a record.
    *
    * @param {string} id
    * @returns {Promise<void>}

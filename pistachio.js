@@ -1,190 +1,292 @@
 export class Pistachio {
-  /**
-   * @type {RouteDefinition[]}
-   */
   #routes = [];
 
-  /**
-   * Registers a resource.
-   *
-   * @param {string} path
-   * @param {Object} resource
-   * @param {Object} options
-   * @returns {RouteDefinition[]}
-   */
-  resource(path, resource, options = {}) {
-    const routes = this.#compileResource(path, resource, options);
+  resource(path, resource, { writer, use = [], views = [] } = {}) {
+    const routes = this.#compileResource(path, resource, {
+      writer,
+      use,
+      views,
+    });
 
     this.#routes.push(...routes);
 
     return routes;
   }
 
-  /**
-   * Compiles a resource into route definitions.
-   *
-   * @param {string} path
-   * @param {Object} resource
-   * @param {Object} options
-   * @returns {RouteDefinition[]}
-   */
-  #compileResource(
-    path,
-    resource,
-    { collection = false, allowedMethods = [], use = [], views = [] } = {}
-  ) {
+  #compileResource(root, resource, { writer, use = [], views = [] } = {}) {
     const routes = [];
-    const methods =
-      allowedMethods.length > 0
-        ? allowedMethods
-        : ['GET', 'POST', 'PUT', 'DELETE'];
-    const viewMap = Object.fromEntries(
-      views.map((view) => [view.contentType, view])
-    );
 
-    //
-    // Collection routes.
-    //
-    if (collection) {
-      const collectionOperations = {
-        POST: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'create',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'create',
-        },
+    const http = resource.http ?? resource.HTTP ?? {};
 
-        GET: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'read',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'read',
-        },
+    const methods = http.allowedMethods ?? ['GET', 'POST', 'PUT', 'DELETE'];
 
-        PUT: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'update',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'update',
-        },
+    const viewMap = Object.fromEntries(views.map((v) => [v.contentType, v]));
 
-        DELETE: {
-          path,
-          resource,
-          use,
-          views: viewMap,
-          allowedMethods: methods,
-          collection: true,
-          operation: 'delete',
-          pattern: new URLPattern({ pathname: path }),
-          rel: 'delete',
-        },
-      };
+    resource.backend(writer);
 
-      for (const method of methods) {
-        const definition = collectionOperations[method];
+    this.#compileCrud(routes, root, resource, methods, {
+      writer,
+      use,
+      views: viewMap,
+      allowedMethods: methods,
+    });
 
-        if (!definition) {
-          continue;
-        }
+    this.#compileProc(routes, root, resource, http.proc ?? {}, {
+      writer,
+      use,
+      views: viewMap,
+      allowedMethods: methods,
+    });
 
-        routes.push({
-          method,
-          ...definition,
-        });
-
-        //
-        // GET gets both collection and member routes.
-        //
-        if (method === 'GET') {
-          routes.push({
-            resource,
-            use,
-            allowedMethods: methods,
-            views: viewMap,
-            method: 'GET',
-            operation: 'read',
-            path: `${path}/:id`,
-            pattern: new URLPattern({ pathname: `${path}/:id` }),
-            rel: 'read',
-          });
-        }
-      }
-    }
-
-    //
-    // Resource-defined routes.
-    //
-    const definitions = resource.constructor.HTTP ?? {};
-
-    for (const [operation, definition] of Object.entries(definitions)) {
-      routes.push({
-        resource,
-        operation,
-        use,
-        views: viewMap,
-        allowedMethods: methods,
-        method: definition.method,
-        path: `${path}/:id${definition.path}`,
-        pattern: new URLPattern({ pathname: `${path}/:id${definition.path}` }),
-        rel: definition.rel,
-      });
-    }
+    this.#compileRelations(routes, root, resource, http.rel ?? {}, {
+      writer,
+      use,
+      views: viewMap,
+      allowedMethods: methods,
+    });
 
     return routes;
   }
 
-  /**
-   * Selects the most appropriate resource view for the request.
-   *
-   * @param {RouteDefinition} route
-   * @param {Request} req
-   * @returns {?IResourceView}
-   */
-  #selectView(route, req) {
-    const accept = req.headers.get('accept');
+  #compileCrud(routes, root, resource, methods, shared) {
+    if (methods.includes('GET')) {
+      routes.push({
+        resource,
+        method: 'GET',
+        path: root,
+        pattern: new URLPattern({
+          pathname: root,
+        }),
 
-    if (!accept || accept === '*/*') {
-      return route.views['application/json'] ?? null;
+        instance: false,
+
+        relation: null,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
+
+      routes.push({
+        resource,
+        method: 'GET',
+        path: `${root}/:id`,
+        pattern: new URLPattern({
+          pathname: `${root}/:id`,
+        }),
+
+        instance: true,
+
+        relation: null,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
     }
 
-    return route.views[accept] ?? route.views['application/json'] ?? null;
+    if (methods.includes('POST')) {
+      routes.push({
+        resource,
+        method: 'POST',
+        path: root,
+        pattern: new URLPattern({
+          pathname: root,
+        }),
+
+        instance: false,
+
+        relation: null,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
+    }
+
+    if (methods.includes('PUT')) {
+      routes.push({
+        resource,
+        method: 'PUT',
+        path: `${root}/:id`,
+        pattern: new URLPattern({
+          pathname: `${root}/:id`,
+        }),
+
+        instance: true,
+
+        relation: null,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
+    }
+
+    if (methods.includes('DELETE')) {
+      routes.push({
+        resource,
+        method: 'DELETE',
+        path: `${root}/:id`,
+        pattern: new URLPattern({
+          pathname: `${root}/:id`,
+        }),
+
+        instance: true,
+
+        relation: null,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
+    }
   }
 
-  async #dispatch(route, req, match) {
-    const ctx = {
-      request: req,
-      params: match.pathname.groups,
-      body: await this.#parseBody(req),
-      route,
-    };
+  #compileProc(routes, root, resource, proc, shared) {
+    for (const [operation, definition] of Object.entries(proc)) {
+      routes.push({
+        resource,
 
-    return this.#pipeline(route.use, ctx, () => this.#invoke(route, ctx));
+        method: definition.method,
+
+        path: root,
+
+        pattern: new URLPattern({
+          pathname: root,
+        }),
+
+        instance: !!definition.instance,
+
+        relation: shared.relation ?? null,
+
+        relationName: shared.relationName ?? null,
+
+        proc: operation,
+
+        interface: definition.interface ?? null,
+
+        ...shared,
+      });
+    }
   }
 
-  /**
-   * Executes a middleware pipeline.
-   *
-   * @param {Function[]} middleware
-   * @param {Object} ctx
-   * @param {Function} terminal
-   * @returns {Promise<Response>}
-   */
+  #compileRelations(routes, root, resource, relations, shared) {
+    for (const [name, definition] of Object.entries(relations)) {
+      //
+      // Collection node
+      //
+      const collectionRoot = `${root}/:id/${name}`;
+
+      routes.push({
+        resource,
+
+        method: 'GET',
+
+        path: collectionRoot,
+
+        pattern: new URLPattern({
+          pathname: collectionRoot,
+        }),
+
+        instance: false,
+
+        relation: definition,
+
+        relationName: name,
+
+        proc: null,
+
+        interface: null,
+
+        ...shared,
+      });
+
+      //
+      // Instance node
+      //
+      let instanceRoot = null;
+
+      if (definition.hasInstances) {
+        const param = definition.id ?? `${name}Id`;
+
+        instanceRoot = `${collectionRoot}/:${param}`;
+
+        routes.push({
+          resource,
+
+          method: 'GET',
+
+          path: instanceRoot,
+
+          pattern: new URLPattern({
+            pathname: instanceRoot,
+          }),
+
+          instance: true,
+
+          relation: definition,
+
+          relationName: name,
+
+          proc: null,
+
+          interface: null,
+
+          ...shared,
+        });
+      }
+
+      //
+      // Procedures attach to existing topology.
+      //
+      for (const [operation, proc] of Object.entries(definition.proc ?? {})) {
+        this.#compileProc(
+          routes,
+
+          proc.instance ? instanceRoot : collectionRoot,
+
+          resource,
+
+          {
+            [operation]: proc,
+          },
+
+          {
+            ...shared,
+
+            relation: definition,
+
+            relationName: name,
+          }
+        );
+      }
+
+      //
+      // Nested relations recurse from the instance node
+      //
+      if (definition.rel && instanceRoot) {
+        this.#compileRelations(
+          routes,
+          instanceRoot,
+          resource,
+          definition.rel,
+          shared
+        );
+      }
+    }
+  }
+
   async #pipeline(middleware, ctx, terminal) {
     let index = -1;
 
@@ -196,7 +298,14 @@ export class Pistachio {
       index = i;
 
       if (i === middleware.length) {
-        return terminal();
+        try {
+          return terminal();
+        } catch(ex) {
+          console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation (${ctx.route.path}) See details -> ${ex.message}`);
+          return new Response('INTERNAL ERROR', {
+            status: 500,
+          });
+        }
       }
 
       const fn = middleware[i];
@@ -204,13 +313,10 @@ export class Pistachio {
       try {
         return await fn(ctx, () => run(i + 1));
       } catch (ex) {
-        console.error(
-          `INTERNAL ERROR (Pistachio): ***EXCEPTION ENCOUNTERED*** while executing middleware (${fn.name}). See details -> ${ex.message}`
-        );
+        console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** while executing the route (${ctx.route.path}) See details -> ${ex.message}`);
 
-        return new Response('{}', {
+        return new Response('INTERNAL ERROR', {
           status: 500,
-          statusText: 'INTERNAL ERROR',
         });
       }
     };
@@ -218,20 +324,14 @@ export class Pistachio {
     return run(0);
   }
 
-  /**
-   * Parses a request body when present.
-   *
-   * @param {Request} req
-   * @returns {Promise<?Object>}
-   */
   async #parseBody(req) {
     if (req.method === 'GET') {
       return null;
     }
 
-    const contentLength = req.headers.get('content-length');
+    const length = req.headers.get('content-length');
 
-    if (contentLength === '0') {
+    if (length === '0') {
       return null;
     }
 
@@ -241,48 +341,198 @@ export class Pistachio {
   async #invoke(route, ctx) {
 
     try {
-      let rep;
-      let instance;
+    let result;
+    let r;
 
-      if (route.method === "POST") {
-        instance = route.resource.of(ctx.body);
-        rep = await route.resource.create(instance.toJSON());
-      } else {
-        const { id } = ctx.params;
-        const record = await route.resource.find({id});
-        instance = route.resource.of(record);
-        rep = await instance[route.operation]({
-          ...ctx.body,
-        });
-        await route.resource.update(instance.toJSON());
-      }
+    //
+    // Relation routes
+    //
+    if (route.relation) {
+      const root = await route.resource.findOne({
+        id: ctx.params.id,
+      });
 
-      const view = this.#selectView(route, ctx.request);
-
-      if (!view) {
-        return new Response('Not Acceptable', {
-          status: 406,
-          statusText: 'NOT ACCEPTABLE',
+      if (!root) {
+        return new Response('Not Found', {
+          status: 404,
         });
       }
 
-      return view.render(rep);
+      let relation = root[route.relation.accessor];
+
+      if (typeof relation === 'function') {
+        relation = await relation.call(root);
+      }
+
+      //
+      // Collection relation
+      //
+      if (!route.instance) {
+        result = relation;
+      }
+
+      //
+      // Relation instance
+      //
+      else {
+        const key = route.relation.id || `${route.relationName}Id`;
+        result = await route.relation.resolve(relation, ctx.params[key]);
+      }
+
+      //
+      // Procedure on relation
+      //
+      if (route.proc) {
+        if (!result) {
+          return new Response('Not Found', {
+            status: 404,
+          });
+        }
+
+        let args = ctx.body ?? {};
+
+        if (route.interface) {
+          const candidate = {
+            params: ctx.params ?? {},
+
+            body: ctx.body ?? {},
+
+            query: ctx.query ?? {},
+
+            headers: Object.fromEntries(ctx.request.headers.entries()),
+          };
+
+          const patch = computePatch(candidate, route.interface);
+
+          args = jsonpatch.applyPatch({}, patch).newDocument;
+        }
+
+        result = await result[route.proc](args, root, root.constructor);
+      }
+    }
+
+    //
+    // Root procedures
+    //
+    else if (route.proc) {
+      const resource = await route.resource.findOne({
+        id: ctx.params.id,
+      });
+
+      if (!resource) {
+        return new Response('Not Found', {
+          status: 404,
+        });
+      }
+
+      let args = ctx.body ?? {};
+
+      if (route.interface) {
+        const candidate = {
+          params: ctx.params ?? {},
+
+          body: ctx.body ?? {},
+
+          query: ctx.query ?? {},
+
+          headers: Object.fromEntries(ctx.request.headers.entries()),
+        };
+
+        const patch = computePatch(candidate, route.interface);
+
+        args = jsonpatch.applyPatch({}, patch).newDocument;
+      }
+
+      result = await resource[route.proc](args, root, root.constructor);
+    }
+
+    //
+    // Collection CRUD
+    //
+    else if (!route.instance) {
+      switch (route.method) {
+        case 'GET':
+          result = await route.resource.findAll(ctx.query);
+          break;
+
+        case 'POST':
+          r = await route.resource.of({
+            ...ctx.body,
+            writer: route.writer,
+          });
+
+          result = [r];
+          break;
+      }
+    }
+
+    //
+    // Instance CRUD
+    //
+    else {
+      switch (route.method) {
+        case 'GET':
+          r = await route.resource.findOne({
+            id: ctx.params.id,
+          });
+
+          result = [r];
+          
+          break;
+
+        case 'PUT':
+          r = await route.resource.updateOne(
+            {
+              id: ctx.params.id,
+            },
+            ctx.body
+          );
+
+          result = [r];
+          break;
+
+        case 'DELETE':
+          result = await route.resource.deleteOne({
+            id: ctx.params.id,
+          });
+          break;
+      }
+    }
+    
+    if (!result) {
+      return new Response('Not Found', {
+        status: 404,
+      });
+    }
+
+    const view = this.#selectView(route, ctx.request);
+
+    if (!view) {
+      return new Response('Not Acceptable', {
+        status: 406,
+      });
+    }
+
+    return view.render(result);
     } catch(ex) {
-      console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** while inovking the route. See details -> ${ex.message}`);
-      return new Response('Internal Error', {
+      console.error(`INTERNAL ERROR (Pistachio): **EXCEPTION ENCOUNTERED** during route invocation. See details -> ${ex.message} `);
+       return new Response('INTERNAL ERROR', {
         status: 500,
-        statusText: 'INTERNAL ERROR',
       });
     }
    
   }
 
-  /**
-   * Resolves an incoming request to a route.
-   *
-   * @param {Request} req
-   * @returns {Promise<Response>}
-   */
+  #selectView(route, req) {
+    const accept = req.headers.get('accept');
+
+    if (!accept || accept === '*/*') {
+      return route.views['application/json'] ?? null;
+    }
+
+    return route.views[accept] ?? route.views['application/json'] ?? null;
+  }
+
   async resolve(req) {
     try {
       const candidates = [];
@@ -298,42 +548,46 @@ export class Pistachio {
         }
       }
 
-      //
-      // No matching resource.
-      //
       if (candidates.length === 0) {
         return new Response('Not Found', {
           status: 404,
-          statusText: 'NOT FOUND',
         });
       }
 
-      //
-      // Matching resource and method.
-      //
       for (const candidate of candidates) {
         if (candidate.route.method === req.method) {
           return this.#dispatch(candidate.route, req, candidate.match);
         }
       }
 
-      //
-      // Matching resource, unsupported method.
-      //
       const { allowedMethods } = candidates[0].route;
 
       return new Response('Method Not Allowed', {
         status: 405,
-        statusText: 'METHOD NOT ALLOWED',
+
         headers: {
           Allow: allowedMethods.join(', '),
         },
       });
     } catch (ex) {
-      console.error(
-        `INTERNAL ERROR (Pistachio): ***EXCEPTION ENCOUNTERED*** while resolving request. See details -> ${ex.message}`
-      );
+      console.error(ex);
     }
+  }
+
+  async #dispatch(route, req, match) {
+    const ctx = {
+      request: req,
+
+      params: match.pathname.groups,
+
+      body: await this.#parseBody(req),
+
+      query: Object.fromEntries(new URL(req.url).searchParams.entries()),
+
+      route,
+    };
+
+    return this.#pipeline(route.use, ctx, () => this.#invoke(route, ctx));
   }
 }
 
@@ -361,11 +615,6 @@ export class Pistachio {
  * @property {string} operation
  * The resource method invoked when this route is dispatched.
  *
- * @property {string} rel
- * The CRUD relationship describing how the result of the domain operation
- * should be persisted. This corresponds to a persistence method exposed by
- * the resource (typically `create`, `read`, `update`, `delete`, or `noop`).
- *
  * @property {boolean} [collection=false]
  * Indicates that the route was automatically generated as part of a
  * collection resource.
@@ -381,4 +630,11 @@ export class Pistachio {
  * @property {Object.<string, IResourceView>} views
  * Resource representations keyed by MIME type (for example
  * `"application/json"`). Used during content negotiation.
+ */
+
+/**
+ * Parses a request body when present.
+ *
+ * @param {Request} req
+ * @returns {Promise<?Object>}
  */

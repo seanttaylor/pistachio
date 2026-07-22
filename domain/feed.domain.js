@@ -1,7 +1,6 @@
-import { Subscription } from './subscription.js';
+import { Subscription, SubscriptionCollection } from './subscription.domain.js';
 import { SystemEvent } from '../system-event.js';
 import { Integrations } from '../integrations.js';
-import { IResource } from '../interfaces/resource.js';
 
 import jsonLogic from 'json-logic-js';
 import * as jsonpatch from 'fast-json-patch';
@@ -63,7 +62,7 @@ const integrationMap = {
 /**
  * See https://stackblitz.com/edit/js-duh7w4h2?file=index.js from public/private key generation in browser.
  */
-export class Feed extends IResource {
+export class Feed {
   /**
    * Determines whether events are automatically published after being pushed.
    * @type {boolean}
@@ -80,13 +79,13 @@ export class Feed extends IResource {
    * ISO timestamp indicating when the feed was created.
    * @type {string}
    */
-  #created_at = new Date().toISOString();
+  #createdAt;
 
   /**
    * Globally unique identifier for the feed instance.
    * @type {string}
    */
-  #id = crypto.randomUUID();
+  #id;
 
   /**
    * Internal append-only collection of events belonging to the feed.
@@ -120,9 +119,9 @@ export class Feed extends IResource {
 
   /**
    * Collection of subscription contracts associated with the feed.
-   * @type {Object<string, Subscription>}
+   *
    */
-  #subscriptions = {};
+  #subscriptions;
 
   /**
    * Topic-to-subscriber routing map used during publication fanout.
@@ -170,34 +169,57 @@ export class Feed extends IResource {
    */
   #eventBindings = {};
 
-  /**
-   * Persistence implementation.
-   *
-   * @type {IFeedWriter}
-   */
-  #writer;
+  constructor({
+    id = crypto.randomUUID(),
+    createdAt = new Date().toISOString(),
+    name,
+    autoPublish,
+    canonical,
+    publisher,
+    topic,
+    schema,
+    subscriptions = [],
+  }) {
+    this.#id = id;
+    this.#createdAt = createdAt;
+    this.#autoPublish = autoPublish;
+    this.#name = name;
+    this.#topic = topic;
+    this.#schema = schema;
+    this.#publisher = publisher;
+    this.#publicKey = 'a hexademical represenation of the public key';
+    this.#privateKey = 'a hexademical represenation of the private key';
+    this.#signature = 'a signature';
+    this.#canonical = canonical;
+    this.#subscriptions = subscriptions instanceof SubscriptionCollection ?
+    subscriptions : new SubscriptionCollection(this, subscriptions);
+    
+    
+  }
 
   static HTTP = {
-    self: {
-      method: 'POST',
-      path: '/feeds',
-      rel: 'create',
-    },
-    subscribe: {
-      method: 'PUT',
-      path: '/subscriptions',
-      rel: 'create',
-    },
-    archive: {
-      method: 'DELETE',
-      path: '',
-      rel: 'update',
+    allowedMethods: ['GET', 'POST'],
+    rel: {
+      subscriptions: {
+        accessor: 'subscriptions',
+        hasInstances: true,
+        id: 'subId',
+        resolve(subscriptions, id) {
+          console.log('inside resolver', { subscriptions, id });
+          return subscriptions.find((s) => s.id === id);
+        },
+        proc: {
+          remove: {
+            method: 'DELETE',
+            instance: true,
+          },
+          add: {
+            method: 'PUT',
+          },
+        },
+      },
     },
   };
-
-  constructor(writer) {
-    super(writer);
-  }
 
   /**
    * Returns the globally unique identifier of the feed.
@@ -254,6 +276,13 @@ export class Feed extends IResource {
   }
 
   /**
+   * @returns {SubscriptionCollection}
+   */
+  get subscriptions() {
+    return this.#subscriptions;
+  }
+
+  /**
    * Serializes feed metadata into a plain JSON object.
    *
    * @returns {Object}
@@ -264,8 +293,9 @@ export class Feed extends IResource {
       name: this.#name,
       schema: this.#schema,
       topic: this.#topic,
-      created_at: this.#created_at,
+      createdAt: this.#createdAt,
       size: this.size,
+      subscriptions: this.subscriptions,
     };
   }
 
@@ -284,44 +314,28 @@ export class Feed extends IResource {
   /**
    * Registers a subscribing feed for one or more event topics.
    *
-   * @param {Object} options
-   * @param {Feed} options.feed Feed subscribing to event publications.
-   * @param {string[]} options.topics Topics the subscriber wishes to receive.
-   * @param {Object[]} options.mapping
-   * @param {Object} options.policy configuration defining subscription behavior
+   * @param {SubscriptionOptions}
    * @returns {Subscription}
    */
-  subscribe({ feed, topics, mapping, policy }) {    
-    const sub = new Subscription({
-      feedName: feed.name,
-      feedId: feed.id,
-      publisherPubKey: this.#publicKey,
-      publisherSig: this.#signature,
-      topics,
-      mapping,
-    });
+  async subscribe(options) {
+    const subscribingFeed = await Feed.writer.read({ id });
+    try {
+      const sub = this.#subscriptions.add(options, subscribingFeed);
 
-    for (const t of topics) {
-      if (!this.#topicMap[t]) {
-        this.#topicMap[t] = [feed];
-      } else {
-        this.#topicMap[t].push(feed);
+      if (options.policy?.replay.head) {
+        setTimeout(() => {
+          this.#items.forEach((item) => {
+            this.publish(item, this.#publisher);
+          });
+        }, 0);
       }
+
+      return sub;
+    } catch (ex) {
+      console.error(
+        `INTERNAL ERROR (Feed): ***EXCEPTION ENCOUNTERED*** while creating a subscription. See details -> ${ex.message}`
+      );
     }
-
-    this.#subscribers[feed.id] = feed;
-    this.#subscriptions[feed.id] = sub;
-
-    if (policy.replay.head) {
-      setTimeout(() => {
-        this.#items.forEach((item) => {
-          this.publish(item, this.#publisher);
-        });
-      }, 0);
-    }
-
-    return sub;
-    
   }
 
   /**
@@ -349,7 +363,8 @@ export class Feed extends IResource {
   publish(event, callbackFn = defaultPublisher) {
     try {
       const name = event.header.name;
-      const topicSubscribers = this.#topicMap[name];
+      const topicSubscribers = this.#subscriptions.to(name);
+
       const { derived, ...originalEventMetadata } = event.header.meta;
 
       const { detail: derivedEvent } = new SystemEvent(
@@ -364,7 +379,7 @@ export class Feed extends IResource {
 
       if (topicSubscribers) {
         for (const ts of topicSubscribers) {
-          const subscription = this.#subscriptions[ts.id];
+          const subscription = this.#subscriptions.get(ts.id);
           callbackFn(event, derivedEvent, subscription)(ts);
         }
         return;
@@ -472,7 +487,7 @@ export class Feed extends IResource {
         includeAttachment: resource.includeAttachment ?? false,
       },
       mapping,
-      created_at: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     };
 
     if (!this.#eventBindings[externalEvent]) {
@@ -511,7 +526,7 @@ export class Feed extends IResource {
    * @param {?string} [options.topic=null] - Primary topic namespace for the feed.
    * @param {?Object} [options.schema=null] - Event schema definition associated with the feed.
    */
-  of({
+  static async of({
     name,
     autoPublish = false,
     canonical = false,
@@ -519,16 +534,53 @@ export class Feed extends IResource {
     topic = null,
     schema = null,
   } = {}) {
-    this.#autoPublish = autoPublish;
-    this.#name = name;
-    this.#topic = topic;
-    this.#schema = schema;
-    this.#publisher = publisher;
-    this.#publicKey = 'a hexademical represenation of the public key';
-    this.#privateKey = 'a hexademical represenation of the private key';
-    this.#signature = 'a signature';
-    this.#canonical = canonical;
+    const f = new Feed({
+      name,
+      autoPublish,
+      canonical,
+      publisher,
+      topic,
+      schema,
+    });
 
-    return this;
+    await Feed.writer.create(f.toJSON());
+    return f;
   }
+
+  static backend(writer) {
+    if (!Feed.writer) {
+      Feed.writer = writer;
+    }
+  }
+
+  static from(record) {
+    if (!record) {
+      throw new Error(`Could not create Feed instance on record of type (${typeof record})`)
+    }
+    return new Feed(record);
+  }
+
+  static async findOne({ id }) {
+    const [record] = await Feed.writer.read({id});
+
+    const f = Feed.from(record);
+    return f;
+  }
+  static async findAll(options) {
+    const recordList = await Feed.writer.read();
+    return recordList;
+  }
+
+  static async updateOne({ id, instance }) {
+    try {
+      const r = await Feed.writer.update(id, instance.toJSON());
+
+      console.log('updatedRecord', r);
+    } catch (ex) {
+      console.error(
+        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not update record (${id}) See details -> ${ex.message}`
+      );
+    }
+  }
+  static deleteOne(id) {}
 }

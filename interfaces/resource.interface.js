@@ -95,8 +95,14 @@ export class ViewFeedJSON extends IResourceView {
    * @param {Object} payload;
    */
   render(payload = {}) {
+  
     return new Response(JSON.stringify(payload), {
       status: 200,
+      headers: {
+        'content-type': this.contentType,
+        'x-pistachio-resource-version': this.version,
+        'x-pistachio-resource-name': this.name
+      }
     });
   }
 }
