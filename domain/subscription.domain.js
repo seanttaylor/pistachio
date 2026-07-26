@@ -1,4 +1,5 @@
 import { ResourceCollection } from '../pistachio/resource.js';
+import { Events } from '../system-event.js';
 
 export class Subscription {
   #createdAt = new Date().toISOString();
@@ -7,45 +8,40 @@ export class Subscription {
   #feedName;
   #feedId;
   #expires_at;
-  #publisherSignature;
-  #publisherPubKey;
   #mapping;
   #rel = 'subscription';
   #publisher;
   #subscriber;
+  #policy;
 
   /***
    * @param {SubscriptionOptions} options
    */
   constructor({
-    feedName,
-    feedId,
-    publisherSig,
-    publisherPubKey,
+    publisher,
     topics,
     mapping,
-    subscriberName,
-    subscriberId,
+    policy,
+    subscriber,
     id = crypto.randomUUID(),
     createdAt = new Date().toISOString(),
   }) {
-    this.#feedName = feedName;
-    this.#feedId = feedId;
-    this.#publisherPubKey = publisherPubKey;
-    this.#publisherSignature = publisherSig;
-    this.#topics = [...topics];
-    this.#mapping = mapping;
-    this.#publisher = {
-      name: feedName,
-      id: feedId,
-    };
-    this.#subscriber = {
-      name: subscriberName,
-      id: subscriberId,
-    };
-
-    this.#id = id;
-    this.#createdAt = createdAt;
+    try {
+      this.#feedName = publisher.name;
+      this.#feedId = publisher.id;
+      this.#topics = [...topics];
+      this.#mapping = mapping;
+      this.#publisher = publisher;
+      this.#subscriber = subscriber;
+      this.#policy = policy;
+      this.#id = id;
+      this.#createdAt = createdAt;
+    } catch (ex) {
+      console.error(
+        `INTERNAL ERROR (Subscription): **EXCEPTION ENCOUNTERED** while creating Subscription instance. See details -> ${ex.message} `
+      );
+      return new Error();
+    }
   }
 
   get publisher() {
@@ -53,11 +49,11 @@ export class Subscription {
   }
 
   get publisherPubKey() {
-    return this.#publisherPubKey;
+    return this.#publisher.publicKey;
   }
 
   get publsherSignature() {
-    return this.#publisherSignature;
+    return this.#publisher.signature;
   }
 
   get id() {
@@ -88,6 +84,60 @@ export class Subscription {
     return new Subscription(options);
   }
 
+  static Request = class {
+    #publisher;
+    #subscriber;
+    #topics;
+    #mapping;
+    #policy;
+
+    constructor(item, publisherName, publisherId) {
+      this.#publisher = {
+        name: publisherName,
+        id: publisherId,
+      };
+
+      this.#subscriber = {
+        name: item.subscriberName,
+        id: item.subscriberId,
+      };
+
+      this.#topics = item.topics;
+      this.#mapping = item.mapping;
+      this.#policy = item.policy;
+    }
+
+    get publisher() {
+      return this.#publisher;
+    }
+
+    get subscriber() {
+      return this.#subscriber;
+    }
+
+    get mapping() {
+      return this.#mapping;
+    }
+
+    get topics() {
+      return this.#topics;
+    }
+
+    get policy() {
+      return this.#policy;
+    }
+
+    toJSON() {
+      return {
+        publisher: this.#publisher,
+        subscriber: this.#subscriber,
+        mapping: this.#mapping,
+        topics: this.#topics,
+        policy: this.#policy,
+      };
+    }
+  };
+
   toJSON() {
     return {
       createdAt: this.#createdAt,
@@ -105,29 +155,41 @@ export class Subscription {
 export class SubscriptionCollection extends ResourceCollection {
   #topicMap = {};
 
-  constructor(owner, items) {
-    super(owner, items);
+  constructor(items) {
+    super(items);
   }
 
   static entity = Subscription;
 
   /**
    *
-   * @param {*} options
+   * @param {*} item
    * @returns {Subscription | Error}
    */
-  async add(options) {
-    try {
-      const subscription = super.add({
-        ...options,
-        feedName: this.owner.name,
-        feedId: this.owner.id,
-      });
+  async add(item) {
+    let subscription;
 
-      await this.owner.constructor.updateOne({
-        id: this.owner.id,
-        instance: this.owner,
+    if (!(item instanceof Subscription)) {
+      subscription = super.add(
+        new Subscription.Request(item, this.owner.name, this.owner.id)
+      );
+
+      this.owner.notify({
+        of: Events.SUBSCRIPTIONS_UPDATE,
+        rel: 'instance.create',
+        payload: subscription
       });
+    } else {
+      subscription = super.add(item);
+    }
+
+    try {
+      
+
+      // await this.owner.constructor.updateOne({
+      //   id: this.owner.id,
+      //   instance: this.owner,
+      // });
 
       for (const topic of subscription.topics) {
         if (!this.#topicMap[topic]) {
@@ -147,6 +209,20 @@ export class SubscriptionCollection extends ResourceCollection {
       );
       return new Error();
     }
+  }
+
+  /**
+   *
+   * @param {Object} options
+   * @param {string} options.subId - the id of the subscription being removed
+   */
+  async remove({ subId }) {
+    super.remove(subId);
+    this.owner.notify({
+      of: Events.SUBSCRIPTIONS_UPDATE,
+      rel: 'instance.delete',
+      payload: subId
+    });
   }
 
   to(topic) {

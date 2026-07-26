@@ -24,7 +24,7 @@ export class ResourceCollection {
    * @see CollectionOwner
    * @type {CollectionOwner}
    */
-  #owner;
+  #owner = null;
 
   /**
    * Internal identity map of entities contained by the collection.
@@ -44,9 +44,7 @@ export class ResourceCollection {
    * @param {(T[]|ResourceCollection<T>)} [items=[]]
    * Initial entities or entity representations.
    */
-  constructor(owner, items = []) {
-    this.#owner = owner;
-
+  constructor(items = []) {
     if (items instanceof ResourceCollection) {
       return items;
     }
@@ -61,6 +59,18 @@ export class ResourceCollection {
    * @type {EntityConstructor}
    */
   static entity;
+
+  /**
+   * Sets the resource owning this collection.
+   * @param {Object} o
+   * @returns {Object}
+   */
+  set owner(o) {
+    if (this.#owner) {
+      return;
+    }
+    this.#owner = o;
+  }
 
   /**
    * Returns the resource owning this collection.
@@ -113,9 +123,8 @@ export class ResourceCollection {
   }
 
   remove(id) {
-    const item = this.get(id);
     this.#items.delete(id);
-    return item;
+    return;
   }
 
   clear() {

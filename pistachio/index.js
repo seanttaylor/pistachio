@@ -1,3 +1,4 @@
+import * as jsonpatch from 'fast-json-patch';
 import { computePatch } from './helpers.js';
 
 /**
@@ -89,7 +90,11 @@ export class Pistachio {
    * @see {@link RelationDefinition}
    * @see {@link ResourceTopology}
    */
-  #compileResource(root, resource, { storageProvider, use = [], views = [] } = {}) {
+  #compileResource(
+    root,
+    resource,
+    { storageProvider, use = [], views = [] } = {}
+  ) {
     const routes = [];
     const http = resource.http ?? resource.HTTP ?? {};
     const methods = http.allowedMethods ?? ['GET', 'POST', 'PUT', 'DELETE'];
@@ -520,7 +525,7 @@ export class Pistachio {
    * @see {@link RequestContext}
    */
   async #parseBody(req) {
-    if (req.method === 'GET') {
+    if (req.method === 'GET' || req.method === 'DELETE') {
       return null;
     }
 
@@ -559,13 +564,17 @@ export class Pistachio {
   async #invoke(route, ctx) {
     try {
       let result;
+      let root;
+      let relation;
+      let instance;
+      let receiver;
       let r;
 
       //
       // Relation routes
       //
       if (route.relation) {
-        const root = await route.resource.findOne({
+        root = await route.resource.findOne({
           id: ctx.params.id,
         });
 
@@ -575,56 +584,70 @@ export class Pistachio {
           });
         }
 
-        let relation = root[route.relation.accessor];
+        relation = root[route.relation.accessor];
 
         if (typeof relation === 'function') {
           relation = await relation.call(root);
         }
 
         //
-        // Collection relation
+        // Resolve relation instance (if applicable)
         //
-        if (!route.instance) {
-          result = relation;
-        }
-
-        //
-        // Relation instance
-        //
-        else {
+        if (route.instance) {
           const key = route.relation.id || `${route.relationName}Id`;
-          result = await route.relation.resolve(relation, ctx.params[key]);
+          instance = await route.relation.resolve(relation, ctx.params[key]);
         }
 
         //
         // Procedure on relation
         //
         if (route.proc) {
-          if (!result) {
+          let args = {
+            ...ctx.params,
+            ...ctx.query,
+            ...(ctx.body ?? {}),
+          };
+
+          if (route.interface) {
+            const candidate = {
+              params: ctx.params ?? {},
+              body: ctx.body ?? {},
+              query: ctx.query ?? {},
+              headers: Object.fromEntries(ctx.request.headers.entries()),
+            };
+
+            const patch = computePatch(candidate, route.interface);
+            args = jsonpatch.applyPatch({}, patch).newDocument;
+          }
+
+          switch (route.on ?? 'self') {
+            case 'self':
+              receiver = relation;
+              break;
+
+            case 'instance':
+              receiver = instance;
+              break;
+
+            default:
+              receiver = root;
+              break;
+          }
+
+          if (!receiver) {
             return new Response('NOT FOUND', {
               status: 404,
             });
           }
 
-          let args = ctx.body ?? {};
+          result = await receiver[route.proc](args, root, root.constructor);
+        }
 
-          if (route.interface) {
-            const candidate = {
-              params: ctx.params ?? {},
-
-              body: ctx.body ?? {},
-
-              query: ctx.query ?? {},
-
-              headers: Object.fromEntries(ctx.request.headers.entries()),
-            };
-
-            const patch = computePatch(candidate, route.interface);
-
-            args = jsonpatch.applyPatch({}, patch).newDocument;
-          }
-
-          result = await result[route.proc](args, root, root.constructor);
+        //
+        // Plain relation retrieval
+        //
+        else {
+          result = route.instance ? instance : relation;
         }
       }
 
@@ -632,11 +655,11 @@ export class Pistachio {
       // Root procedures
       //
       else if (route.proc) {
-        const resource = await route.resource.findOne({
+        root = await route.resource.findOne({
           id: ctx.params.id,
         });
 
-        if (!resource) {
+        if (!root) {
           return new Response('NOT FOUND', {
             status: 404,
           });
@@ -647,20 +670,16 @@ export class Pistachio {
         if (route.interface) {
           const candidate = {
             params: ctx.params ?? {},
-
             body: ctx.body ?? {},
-
             query: ctx.query ?? {},
-
             headers: Object.fromEntries(ctx.request.headers.entries()),
           };
 
           const patch = computePatch(candidate, route.interface);
-
           args = jsonpatch.applyPatch({}, patch).newDocument;
         }
 
-        result = await resource[route.proc](args, root, root.constructor);
+        result = await root[route.proc](args, root, root.constructor);
       }
 
       //
@@ -694,7 +713,6 @@ export class Pistachio {
             });
 
             result = [r];
-
             break;
 
           case 'PUT':

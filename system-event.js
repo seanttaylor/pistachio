@@ -43,10 +43,6 @@ export class SystemEvent extends CustomEvent {
  * @enum {string}
  */
 export const Events = Object.freeze({
-  SALE_COMPLETED: 'evt.sales.pos.sale_completed',
-  RETURN_COMPLETED: 'evt.sales.pos.return_completed',
-  EXCHANGE_COMPLETED: 'evt.sales.pos.exchange_completed',
-  OFFER_LETTER_SIGNED: 'evt.hr.offer_letter_signed',
-  MARKETING_CAMPAIGN_LAUNCHED: 'evt.marketing.campaign_launched',
+  SUBSCRIPTIONS_UPDATE: 'evt.feed.subscriptions.update',
   NOOP_EVENT: 'evt.system.noop',
 });

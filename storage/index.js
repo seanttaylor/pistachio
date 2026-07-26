@@ -61,15 +61,21 @@ export class MongoDBProvider {
    * @returns {Promise<MongoDBProvider>}
    */
   static async from({ uri, instance }) {
-    const client = new MongoClient(uri);
+    try {
+      const client = new MongoClient(uri);
+      await client.connect();
 
-    await client.connect();
-
-    return new MongoDBProvider(client, client.db(instance));
+      return new MongoDBProvider(client, client.db(instance));
+    } catch (ex) {
+      console.log(
+        `INTERNAL ERROR (MongoDBProvider): **EXCEPTION ENCOUNTERED** while establishing database connection. See details -> ${ex.message}`
+      );
+    }
   }
 
   /**
    * Creates a MongoDB document.
+   *
    * The incoming record is expected to contain
    * a `rel` property which determines the target
    * Mongo collection.
@@ -90,6 +96,76 @@ export class MongoDBProvider {
       id,
       ...insertRecord,
     };
+  }
+
+  /**
+   * Reads a MongoDB document.
+   *
+   * @param {Object} options
+   * @param {string} options.rel
+   * @param {string} options.id
+   * @returns {Promise<?Object>}
+   */
+  async read({ id, rel }) {
+    const collectionName = `${rel}s`;
+    const record = await this.#db.collection(collectionName).findOne({
+      _id: id,
+    });
+
+    if (!record) {
+      return null;
+    }
+
+    const { _id, ...data } = record;
+
+    return [
+      {
+        id: _id,
+        ...data,
+      },
+    ];
+  }
+
+  /**
+   * Updates a MongoDB document.
+   *  @param {string} id
+   * @param {Object} record
+   * @returns {Promise<?Object>}
+   */
+  async update(id, record) {
+    const { rel, id: _, ...updates } = record;
+    const collectionName = `${rel}s`;
+
+    await this.#db.collection(collectionName).updateOne(
+      {
+        _id: id,
+      },
+      {
+        $set: updates,
+      }
+    );
+
+    return {
+      id,
+      rel,
+      ...updates,
+    };
+  }
+
+  /**
+   * Deletes a MongoDB document.
+   *
+   * @param {Object} options
+   * @param {string} options.id
+   * @returns {Promise<boolean>}
+   */
+  async delete({ id, rel }) {
+    const collectionName = `${rel}s`;
+    const result = await this.#db.collection(collectionName).deleteOne({
+      _id: id,
+    });
+
+    return result.deletedCount === 1;
   }
 
   /**

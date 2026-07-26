@@ -1,5 +1,6 @@
 import { Subscription, SubscriptionCollection } from './subscription.domain.js';
-import { SystemEvent } from '../system-event.js';
+import { Events, SystemEvent } from '../system-event.js';
+import { IAggregateRoot } from '../interfaces/root.interface.js';
 
 import jsonLogic from 'json-logic-js';
 import * as jsonpatch from 'fast-json-patch';
@@ -19,11 +20,16 @@ const defaultPublisher = (originalEvent, derivedEvent) => {
   };
 };
 
+const aggregateEventMap = {
+  async [Events.SUBSCRIPTIONS_UPDATE](agv) {
+    await Feed.updateOne({ id: this.id, instance: this });
+  }
+}
 
 /**
  * See https://stackblitz.com/edit/js-duh7w4h2?file=index.js from public/private key generation in browser.
  */
-export class Feed {
+export class Feed extends IAggregateRoot {
   /**
    * Determines whether events are automatically published after being pushed.
    * @type {boolean}
@@ -82,7 +88,7 @@ export class Feed {
    * Collection of subscription contracts associated with the feed.
    *
    */
-  #subscriptions;
+  #subscriptions = new SubscriptionCollection();
 
   /**
    * Topic-to-subscriber routing map used during publication fanout.
@@ -127,7 +133,7 @@ export class Feed {
    * Indicates what an domain entity _is_ for consumers
    * @type {string}
    */
-  #rel = 'feed'
+  #rel = 'feed';
 
   constructor({
     id = crypto.randomUUID(),
@@ -140,6 +146,7 @@ export class Feed {
     schema,
     subscriptions = [],
   }) {
+    super();
     this.#id = id;
     this.#createdAt = createdAt;
     this.#autoPublish = autoPublish;
@@ -151,12 +158,20 @@ export class Feed {
     this.#privateKey = 'a hexademical represenation of the private key';
     this.#signature = 'a signature';
     this.#canonical = canonical;
-    this.#subscriptions = subscriptions instanceof SubscriptionCollection ?
-    subscriptions : new SubscriptionCollection(this, subscriptions);
+    this.#subscriptions.owner = this;
+
+    /* We take the raw subscriptions from the constructor args and
+     * add them to the `SubscriptionCollection` instance at `this.#subscriptions`
+     */
+    subscriptions.forEach((s) => {
+      //this.#subscriptions.add(s)
+      const fromExisting = new Subscription(s);
+      this.#subscriptions.add(fromExisting);
+    });
   }
 
   static HTTP = {
-    allowedMethods: ['GET', 'POST'],
+    allowedMethods: ['GET', 'POST', 'DELETE'],
     rel: {
       subscriptions: {
         accessor: 'subscriptions',
@@ -260,9 +275,18 @@ export class Feed {
       topic: this.#topic,
       createdAt: this.#createdAt,
       size: this.size,
-      subscriptions: this.subscriptions,
-      rel: this.rel
+      subscriptions: this.#subscriptions.toArray().map((s) => s.toJSON()),
+      rel: this.#rel,
     };
+  }
+
+  /**
+   * @param {Object} aggregateEvent
+   * @param {string} aggregateEvent.of
+   * @param {string} aggregateEvent.payload
+   */
+  async notify(aggregateEvent) {
+    await aggregateEventMap[aggregateEvent.of].call(this, aggregateEvent);
   }
 
   /**
@@ -279,7 +303,7 @@ export class Feed {
 
   /**
    * Registers a subscribing feed for one or more event topics.
-   *
+   * @deprecated
    * @param {SubscriptionOptions}
    * @returns {Subscription}
    */
@@ -390,9 +414,11 @@ export class Feed {
    * @param {function} [options.publisher=defaultPublisher] - Publication transport implementation.
    * @param {?string} [options.topic=null] - Primary topic namespace for the feed.
    * @param {?Object} [options.schema=null] - Event schema definition associated with the feed.
+   * @param {Object[]} options.subscriptions - list of subscriptions to the feed.
    */
   static async of({
     name,
+    subscriptions,
     autoPublish = false,
     canonical = false,
     publisher = defaultPublisher,
@@ -406,6 +432,7 @@ export class Feed {
       publisher,
       topic,
       schema,
+      subscriptions,
     });
 
     await Feed.storageProvider.create(f.toJSON());
@@ -420,17 +447,19 @@ export class Feed {
 
   static from(record) {
     if (!record) {
-      throw new Error(`Could not create Feed instance on record of type (${typeof record})`)
+      throw new Error(
+        `Could not create Feed instance on record of type (${typeof record})`
+      );
     }
     return new Feed(record);
   }
 
   static async findOne({ id }) {
-    try { 
-      const [record] = await Feed.storageProvider.read({id});
+    try {
+      const [record] = await Feed.storageProvider.read({ id, rel: 'feed' });
       const f = Feed.from(record);
       return f;
-    } catch(ex) {
+    } catch (ex) {
       console.error(
         `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find Feed record (${id}). See details -> ${ex.message}`
       );
@@ -440,7 +469,7 @@ export class Feed {
     try {
       const recordList = await Feed.storageProvider.read();
       return recordList;
-    } catch(ex) {
+    } catch (ex) {
       console.error(
         `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not find Feed records. See details -> ${ex.message}`
       );
@@ -448,13 +477,9 @@ export class Feed {
   }
 
   static async updateOne({ id, instance }) {
-    try {
-      await Feed.storageProvider.update(id, instance.toJSON());
-    } catch (ex) {
-      console.error(
-        `INTERNAL_ERROR (Feed): **EXCEPTION ENCOUNTERED** Could not update Feed record (${id}) See details -> ${ex.message}`
-      );
-    }
+    await Feed.storageProvider.update(id, instance.toJSON());
   }
-  static deleteOne(id) {}
+  static async deleteOne({ id }) {
+    return await Feed.storageProvider.delete({ id, rel: 'feed' });
+  }
 }
