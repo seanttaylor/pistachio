@@ -55,7 +55,7 @@
  * Route definitions are the internal representation of HTTP resources.
  * They are generated once during resource registration and consumed by the
  * request resolver and dispatcher at runtime.
- *
+
  * @typedef {Object} RouteDefinition
  *
  * @property {string} method

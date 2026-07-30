@@ -413,12 +413,14 @@ export class Feed extends IAggregateRoot {
    * @param {boolean} [options.autoPublish=false] - Automatically publish events after insertion.
    * @param {function} [options.publisher=defaultPublisher] - Publication transport implementation.
    * @param {?string} [options.topic=null] - Primary topic namespace for the feed.
+   * @param {?string} [options.mapping] - A JSON Patch document for mapping feed updates or to a subscriber interface
    * @param {?Object} [options.schema=null] - Event schema definition associated with the feed.
    * @param {Object[]} options.subscriptions - list of subscriptions to the feed.
    */
   static async of({
     name,
     subscriptions,
+    mapping,
     autoPublish = false,
     canonical = false,
     publisher = defaultPublisher,
@@ -427,6 +429,7 @@ export class Feed extends IAggregateRoot {
   } = {}) {
     const f = new Feed({
       name,
+      mapping,
       autoPublish,
       canonical,
       publisher,
