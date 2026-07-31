@@ -1,21 +1,36 @@
 import { json2csv } from 'json-2-csv';
 
+/**
+ * Abstract base class representing a renderable resource
+ * representation.
+ *
+ * Resource views are responsible for transforming domain
+ * objects into concrete HTTP representations such as JSON,
+ * CSV, XML, or HTML.
+ *
+ * Implementations must provide a concrete {@link IResourceView#render}
+ * method.
+ *  
+ * @abstract
+ * 
+ * @see {@link ResourceRepresentation}
+ */
 class IResourceView {
   #contentType;
   #name;
   #payload;
-  #renderFn;
   #version;
 
   /**
-   * @param {Object} options
+   * Creates a new resource view.
+   *
+   * @param {ResourceRepresentation} options
    */
   constructor(options) {
     this.#contentType = options.contentType;
     this.#name = options.name;
     this.#payload;
     this.#version = options.version;
-    this.#renderFn = options.renderFn;
   }
 
   get name() {
@@ -35,9 +50,19 @@ class IResourceView {
   }
 
   /**
-   * @return {Response}
+   * Renders a resource representation.
+   * 
+   * Implementations should transform the supplied payload
+   * into an HTTP {@link Response}.
+   *
+   * @abstract
+   *
+   * @param {*} payload
+   * Resource payload to render.
+   *
+   * @returns {Response}
    */
-  render() {
+  render(payload) {
     throw new Error('Method **MUST** be implemented');
   }
 }
@@ -55,8 +80,14 @@ export class ViewFeedJSON extends IResourceView {
    * @param {Object} payload;
    */
   render(payload = {}) {
+  
     return new Response(JSON.stringify(payload), {
       status: 200,
+      headers: {
+        'content-type': this.contentType,
+        'x-pistachio-resource-name': this.name,
+        'x-pistachio-resource-version': this.version
+      }
     });
   }
 }
@@ -79,7 +110,8 @@ export class ViewFeedCSV extends IResourceView {
       status: 200,
       headers: {
         'content-type': this.contentType,
-        version: this.version,
+        'x-pistachio-resource-name': this.name,
+        'x-pistachio-resource-version': this.version,
       },
     });
   }

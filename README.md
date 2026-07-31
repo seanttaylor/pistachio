@@ -1,275 +1,175 @@
 # Pistachio
 
-> A resource-oriented HTTP router for JavaScript and Deno.
+**Pistachio** is an Object-Oriented Hypermedia Framework for JavaScript.
 
-Pistachio is an HTTP router built around a simple idea:
+Rather than treating HTTP as a collection of controllers, Pistachio exposes object graphs directly as navigable resource topologies. Resources, relationships, and behaviors are described declaratively, then compiled into executable HTTP routes.
 
-> **Resources should describe themselves.**
-
-Rather than imperatively wiring HTTP endpoints to controller functions, resources declare how they are exposed over HTTP. From that description, Pistachio compiles an internal routing model capable of resolving requests, executing middleware, invoking domain operations, persisting state, and rendering representations.
-
-The result is significantly less routing boilerplate and a clearer separation between domain logic, persistence, transport, and presentation.
-
-> **Status:** Early development (v0.x). APIs may change as the resource model continues to evolve.
+The result is an API that reflects the structure of the domain itself.
 
 ---
 
-# Motivation
+## Philosophy
 
-Traditional HTTP frameworks often encourage routing code like this:
+Most web frameworks begin with HTTP.
 
-```js
-router.get("/feeds", controller.list);
-router.post("/feeds", controller.create);
-router.get("/feeds/:id", controller.read);
-router.put("/feeds/:id", controller.update);
-router.delete("/feeds/:id", controller.remove);
-```
+Routes are declared, controllers are attached, and the application is written to satisfy those endpoints.
 
-As applications grow, routing becomes another layer that must be maintained independently from the resources themselves.
+Pistachio begins somewhere else.
 
-A developer creates a service...
+The application is a graph of objects connected through relationships. HTTP is simply one representation of that graph.
 
-...then creates a controller...
+A resource is not a controller.
 
-...then wires routes...
+A relationship is not just another URL.
 
-...then configures middleware...
+A procedure is not an RPC endpoint.
 
-...then decides how responses should be serialized.
+Each exists because it exists in the domain.
 
-Much of this is plumbing.
-
-Pistachio instead treats the resource itself as the source of truth.
+Pistachio's job is simply to project that domain onto the web.
 
 ---
 
-# Philosophy
+## Core Concepts
 
-Pistachio is built around several guiding principles.
+Pistachio models every API in terms of four concepts.
 
-## Resources describe themselves
+### Resources
 
-Resources define how they are exposed over HTTP through a static `HTTP` description.
+Resources are domain objects exposed over HTTP.
 
-```js
-class Feed {
-  static HTTP = {
-    subscribe: {
-      method: "POST",
-      path: "/subscriptions",
-      rel: "create",
-    },
-
-    archive: {
-      method: "DELETE",
-      path: "",
-      rel: "update",
-    },
-  };
-}
-```
-
-This description is compiled into a routing table during application startup.
-
----
-
-## Domain operations are not CRUD operations
-
-A resource may expose operations such as
-
-* subscribe
-* archive
-* publish
-* approve
-
-These are domain operations.
-
-They are **related** to persistence through the `rel` property, but they are not themselves CRUD operations.
-
-For example,
+A resource may support conventional CRUD operations, executable behaviors, or both.
 
 ```text
-POST /feeds/:id/subscriptions
+Feed
+User
+Invoice
+Order
 ```
 
-invokes
+---
 
-```js
-feed.subscribe(...)
-```
+### Relations
 
-while
+Resources expose relationships to other resources.
+
+Relationships become navigable URLs without requiring manual route construction.
 
 ```text
-rel: "create"
+Feed
+ └── subscriptions
+      └── subscription
 ```
 
-instructs Pistachio to persist the resulting resource using the resource's persistence implementation.
+becomes
 
-This keeps domain behavior independent of storage.
+```text
+/feeds/:id/subscriptions
+/feeds/:id/subscriptions/:subId
+```
 
 ---
 
-## Persistence is abstract
+### Procedures
 
-Resources do not know how data is stored.
+Not every domain behavior is CRUD.
 
-Instead they receive a persistence implementation.
+Pistachio allows arbitrary object methods to be exposed as HTTP operations.
 
-```js
-new Feed(
-    new MemoryFeedWriter()
-)
+```text
+PUT /feeds/:id/subscriptions
+DELETE /feeds/:id/subscriptions/:subId
 ```
 
-Today this might be an in-memory implementation.
-
-Tomorrow it might target PostgreSQL, MongoDB, Redis, DynamoDB, or a remote API.
-
-The resource itself never changes.
+These invoke methods on the underlying domain model rather than introducing controller logic.
 
 ---
 
-## Resources can have multiple representations
+### Views
 
-A resource is independent from how it is represented.
+Resources are independent of representation.
 
-The same resource may be rendered as
+Views render domain objects into negotiated media types.
 
-* JSON
-* HTML
-* CSV
-* PDF
-* XML
-
-using interchangeable resource views.
-
-```js
-router.resource("/feeds", feed, {
-    views: [
-        new FeedViewJSON(),
-        new FeedViewHTML(),
-        new FeedViewCSV(),
-    ]
-});
+```text
+application/json
+text/html
+application/vnd.example+json
 ```
 
-Pistachio performs content negotiation and delegates response generation to the selected view.
+The domain remains unaware of HTTP serialization.
 
 ---
 
-## Middleware remains simple
+## Object-Oriented Hypermedia
 
-Middleware receives a request context and a `next()` function.
+Pistachio treats URLs as navigable object references.
 
-```js
-export async function logger(ctx, next) {
-    const start = Date.now();
+Given a domain model
 
-    const response = await next();
-
-    console.log(Date.now() - start);
-
-    return response;
-}
+```text
+Feed
+ └── SubscriptionCollection
+      └── Subscription
 ```
 
-Middleware may
+Pistachio compiles the topology into executable routes.
 
-* continue execution
-* modify the request
-* modify the response
-* terminate the request early
+```text
+GET    /feeds
+POST   /feeds
 
-by simply returning a `Response`.
+GET    /feeds/:id
+
+GET    /feeds/:id/subscriptions
+PUT    /feeds/:id/subscriptions
+
+GET    /feeds/:id/subscriptions/:subId
+DELETE /feeds/:id/subscriptions/:subId
+```
+
+No controllers.
+
+No duplicated routing logic.
+
+The topology already exists inside the object model.
 
 ---
 
-# Example
+## Resource Metadata
 
-```js
-const router = new Pistachio();
+Resources describe their HTTP topology declaratively.
 
-router.resource(
-    "/feeds",
-    new Feed(
-        new MemoryFeedWriter()
-    ),
-    {
-        collection: true,
+```javascript
+static HTTP = {
+  allowedMethods: ['GET', 'POST'],
 
-        allowedMethods: [
-            "GET",
-            "POST",
-        ],
+  rel: {
+    subscriptions: {
+      accessor: 'subscriptions',
 
-        use: [
-            logger,
-        ],
+      proc: {
+        add: {
+          method: 'PUT'
+        },
 
-        views: [
-            new FeedViewJSON(),
-        ],
+        remove: {
+          method: 'DELETE',
+          instance: true
+        }
+      }
     }
-);
+  }
+}
 ```
 
-A single registration describes
-
-* automatic collection CRUD operations
-* custom resource operations
-* middleware
-* content negotiation
-* persistence
-* HTTP semantics
-
-without manually wiring route handlers.
+Pistachio compiles this metadata into executable routes during application startup.
 
 ---
 
-# Automatic Collection Resources
+## Execution Model
 
-Collection resources can automatically expose CRUD endpoints.
-
-```js
-router.resource("/feeds", feed, {
-    collection: true
-});
-```
-
-generates
-
-```text
-GET     /feeds
-GET     /feeds/:id
-POST    /feeds
-PUT     /feeds/:id
-DELETE  /feeds/:id
-```
-
-Methods may be restricted using `allowedMethods`.
-
-```js
-allowedMethods: [
-    "GET",
-    "POST"
-]
-```
-
-Pistachio automatically returns
-
-```text
-405 Method Not Allowed
-```
-
-for unsupported methods while still distinguishing them from missing resources (`404 Not Found`).
-
----
-
-# Resource Lifecycle
-
-Every request follows the same pipeline.
+Every request follows the same lifecycle.
 
 ```text
 HTTP Request
@@ -278,61 +178,82 @@ HTTP Request
 Route Resolution
       │
       ▼
-Middleware
+Middleware Pipeline
       │
       ▼
-Domain Operation
+ResourceOperation
+      │
+      ├── resolve root
+      ├── resolve relation
+      ├── resolve instance
+      └── execute procedure
       │
       ▼
-Persistence
-      │
-      ▼
-Content Negotiation
-      │
-      ▼
-Resource View
+View Rendering
       │
       ▼
 HTTP Response
 ```
 
-Each stage has a single responsibility and remains independently replaceable.
+The routing layer remains thin.
+
+Domain execution occurs inside a `ResourceOperation`, which encapsulates the state and behavior of a single request.
 
 ---
 
-# Current Features
+## Design Goals
 
-* Resource-oriented routing
-* Automatic collection CRUD generation
-* Declarative resource operations
-* Middleware pipeline
-* Pluggable persistence
-* HTTP content negotiation
-* Resource views
-* Proper HTTP status semantics (404, 405, 406)
-* Automatic `Allow` headers
-* URLPattern-based route matching
+Pistachio is designed around a small number of principles.
 
----
-
-# Project Status
-
-Pistachio is currently in active development.
-
-The framework is still exploring its resource model, and APIs should be considered experimental until a stable 1.0 release.
-
-Current areas of exploration include:
-
-* richer resource metadata
-* hypermedia support
-* authorization policies
-* versioned resource views
-* automated API documentation
-* improved content negotiation
-* additional persistence adapters
+- Object-oriented first
+- Hypermedia by construction
+- Declarative resource topology
+- Explicit domain behavior
+- Representation independence
+- Minimal framework magic
+- No controller layer
+- Separation of HTTP, domain, and persistence concerns
 
 ---
 
-# License
+## Architecture
 
-MIT
+Pistachio intentionally separates three independent models.
+
+```text
+             HTTP Model
+                  │
+          ResourceOperation
+                  │
+        Domain Object Model
+                  │
+          Persistence Layer
+```
+
+The domain has no knowledge of HTTP.
+
+Persistence has no knowledge of routing.
+
+HTTP simply projects the object graph.
+
+---
+
+## Why Pistachio?
+
+Traditional frameworks ask:
+
+> "What controller handles this request?"
+
+Pistachio asks:
+
+> "What object does this URL represent?"
+
+Once that object is identified, everything else follows naturally.
+
+Relations become navigation.
+
+Methods become procedures.
+
+Representations become views.
+
+The API becomes a faithful projection of the domain rather than an independent layer that must be kept in sync.
