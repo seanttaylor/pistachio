@@ -1,5 +1,6 @@
 import { ResourceCollection } from '../pistachio/resource.js';
 import { Events } from '../system-event.js';
+import { Feed } from './feed.domain.js';
 
 export class Subscription {
   #createdAt = new Date().toISOString();
@@ -153,6 +154,10 @@ export class Subscription {
 }
 
 export class SubscriptionCollection extends ResourceCollection {
+  /**
+   * Topic-to-subscriber routing map used during publication fanout.
+   * @type {Object<string, Object[{ feed: Feed, subscription: Subscription }]>}
+   */
   #topicMap = {};
 
   constructor(items) {
@@ -177,20 +182,13 @@ export class SubscriptionCollection extends ResourceCollection {
       this.owner.notify({
         of: Events.SUBSCRIPTIONS_UPDATE,
         rel: 'instance.create',
-        payload: subscription
+        payload: subscription,
       });
     } else {
       subscription = super.add(item);
     }
 
     try {
-      
-
-      // await this.owner.constructor.updateOne({
-      //   id: this.owner.id,
-      //   instance: this.owner,
-      // });
-
       for (const topic of subscription.topics) {
         if (!this.#topicMap[topic]) {
           this.#topicMap[topic] = [];
@@ -221,7 +219,7 @@ export class SubscriptionCollection extends ResourceCollection {
     this.owner.notify({
       of: Events.SUBSCRIPTIONS_UPDATE,
       rel: 'instance.delete',
-      payload: subId
+      payload: subId,
     });
   }
 

@@ -91,12 +91,9 @@ export class Feed extends IAggregateRoot {
   #subscriptions = new SubscriptionCollection();
 
   /**
-   * Topic-to-subscriber routing map used during publication fanout.
-   * @type {Object<string, Feed[]>}
+   * 
    */
-  #topicMap = {
-    rel: `topic_map:${this.#id}`,
-  };
+  #mapping;
 
   /**
    * Human-readable name assigned to the feed.
@@ -138,18 +135,20 @@ export class Feed extends IAggregateRoot {
   constructor({
     id = crypto.randomUUID(),
     createdAt = new Date().toISOString(),
-    name,
     autoPublish,
     canonical,
+    mapping,
+    name,
     publisher,
-    topic,
     schema,
+    topic,
     subscriptions = [],
   }) {
     super();
     this.#id = id;
     this.#createdAt = createdAt;
     this.#autoPublish = autoPublish;
+    this.#mapping = mapping;
     this.#name = name;
     this.#topic = topic;
     this.#schema = schema;
@@ -210,6 +209,10 @@ export class Feed extends IAggregateRoot {
    */
   get topic() {
     return this.#topic;
+  }
+
+  get mapping() {
+    return this.#mapping
   }
 
   /**
@@ -276,6 +279,7 @@ export class Feed extends IAggregateRoot {
       createdAt: this.#createdAt,
       size: this.size,
       subscriptions: this.#subscriptions.toArray().map((s) => s.toJSON()),
+      mapping: this.#mapping,
       rel: this.#rel,
     };
   }
