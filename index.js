@@ -7,8 +7,12 @@ import { MongoDBProvider } from './storage/index.js';
 import { Feed } from './domain/feed.domain.js';
 
 import Fastify from 'fastify';
+import figlet from 'figlet';
 
 (async function main() {
+  const APP_NAME = process.env.APP_NAME || 'pistachio';
+  const APP_VERSION = process.env.APP_VERSION || '1.0.1';
+  const PORT = process.env.PORT || 8000;
   const envToLogger = {
     development: {
       transport: {
@@ -22,12 +26,13 @@ import Fastify from 'fastify';
     production: true,
     test: false,
   };
-
+  
   const fastify = Fastify({
     logger: envToLogger[process.env.environment || 'development'],
   });
-
+  
   try {
+    const banner = await figlet(`${APP_NAME} v${APP_VERSION}`);
     const router = new Pistachio();
     router.resource('/feeds', Feed, {
       storageProvider: await MongoDBProvider.from({
@@ -56,10 +61,17 @@ import Fastify from 'fastify';
       reply.send(response);
     });
 
-    await fastify.listen({ port: 8000 });
+    fastify.listen({ port: PORT }, (err) => {
+      if (err) {
+        console.error(`INTERNAL_ERROR (Main): ***EXCEPTION ENCOUNTERED*** while starting server. See details -> ${err.message} `);
+        process.exit(1);
+      }
+      console.log(`Application listening on port ${PORT}`);
+      console.log(banner);
+    });
   } catch (ex) {
     console.error(
-      `INTERNAL_ERROR (Main): Exception encountered. See details -> ${ex.message}`
+      `INTERNAL_ERROR (Main): ***EXCEPTION ENCOUNTERED***. See details -> ${ex.message}`
     );
     fastify.log.error(ex);
     process.exit(1);
